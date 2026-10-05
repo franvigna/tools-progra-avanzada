@@ -37,7 +37,10 @@
 <div id="app">
 
   <nav class="navbar navbar-dark bg-dark px-3">
-    <span class="navbar-brand mb-0 h5">🔤 LCS — Subsecuencia Común más Larga</span>
+    <div class="d-flex align-items-center gap-2">
+      <a href="../index.html" class="btn btn-sm btn-outline-light" title="Volver al inicio">←</a>
+      <span class="navbar-brand mb-0 h5">🔤 LCS — Subsecuencia Común más Larga</span>
+    </div>
     <div class="d-flex align-items-center gap-2">
       <span class="badge bg-secondary">DP · O(m·n)</span>
       <button class="btn btn-sm" :class="newConfirm ? 'btn-warning text-dark' : 'btn-outline-light'" @click="handleNewClick" title="Volver a los valores de ejemplo">

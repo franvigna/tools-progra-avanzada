@@ -104,6 +104,10 @@ Para algoritmos paso a paso sobre un grafo genérico (DFS/BFS y similares), dond
   - **Matriz de adyacencia**: card flotante arriba a la derecha (`showMatrix`, no se persiste), `computed` a partir de `edges`/`directed`; `sortLabels` copiado de `dijkstra.html`.
   - **Export PPTX**: PptxGenJS `4.0.1` (excepción a la lista de CDNs, solo acá), cargado con un `<script>` dinámico recién al exportar, no en el `<head>`. PptxGenJS no genera conectores: las aristas se emiten como líneas con `objectName` (`e0`, `e1`...) y después se reescriben en `slide1.xml` como `<p:cxnSp>` con `stCxn`/`endCxn` hacia los nodos (`n0`, `n1`...), usando el `JSZip` que trae el bundle. Ese retoque depende del XML de esa versión exacta: si se actualiza PptxGenJS, volver a probar el import en Google Slides moviendo un nodo. Los costos quedan como texto suelto (un conector no puede llevar texto).
 
+## Ejercicios (`ejercicios/`)
+
+Un archivo por ejercicio propuesto, con nombre en PascalCase (`PuertoGaviota.html`), que resuelve el ejercicio paso a paso. Se arma copiando la plantilla de la familia que mejor encaje (`ejercicios/PuertoGaviota.html` es un caso de Familia 3, copiado de `grafos/kruskal.html`; `ejercicios/CaminoAUNLaM.html` es `grafos/dijkstra.html` con el grafo de la consigna precargado, rótulos y una card de respuestas) y agrega una pestaña "📖 Resolución" en el panel lateral con lo que pide la consigna (modelado, pseudocódigo, complejidad). La entrada usa el mismo formato de datos que la consigna. Navbar con el emoji del ejercicio y badge "Ejercicio · ...". En `index.html` van bajo `<h2>Ejercicios</h2>`, y en `README.md` bajo "### Ejercicios".
+
 ## Persistencia, "Nuevo" y Compartir por URL (obligatorio)
 
 Apoyado en dos helpers idénticos por archivo:
@@ -198,6 +202,21 @@ Mecanismo nativo de Bootstrap 5.3 (`data-bs-theme` en `<html>`), no librería ni
 - No mezclar el botón dentro de `#app` con `<script>` sueltos ahí adentro (Vue compila ese `innerHTML` como template, no se re-ejecuta al montar).
 - Toda caja/celda con color (tabla DP, cajas de fórmula) usa variables `--bs-*-subtle` de Bootstrap, nunca hex fijo. Las cajas de KaTeX (`#formula-box`, `#subst-box`) usan `bg-body-tertiary`, no `bg-white`.
 - Chips que muestran texto crudo de entrada (ej. `bg-light text-dark border`) se dejan fijos — es un chip de "código", legible en cualquier tema a propósito.
+
+## Sendero (`Sendero/<TemaDelSendero>/`)
+
+Un sendero agrupa ejercicios sobre una misma pregunta de fondo: una subcarpeta con el tema del sendero (PascalCase) y un `.html` por ejercicio. Cada archivo es un caso de la sección "Ejercicios" (copia del archivo de `grafos/` más parecido, con la entrada precargada y una pestaña "📖 Resolución") y su badge del navbar empieza con "Sendero ·". Como están a dos niveles de la raíz, el botón de volver apunta a `../../index.html`. En `index.html` cada sendero es un `<h2>` propio con una tarjeta por ejercicio (con la dificultad ★), y en `README.md` va bajo "### Sendero: ...".
+
+## Botón de volver a la portada (obligatorio, todas las visualizaciones menos `index.html`)
+
+A la izquierda del título del navbar, agrupado con él en un `div.d-flex.align-items-center.gap-2`:
+
+```html
+<div class="d-flex align-items-center gap-2">
+  <a href="../index.html" class="btn btn-sm btn-outline-light" title="Volver al inicio">←</a>   <!-- ../../index.html dentro de Sendero/ -->
+  <span class="navbar-brand mb-0 h5">...</span>
+</div>
+```
 
 ## Footer (obligatorio, idéntico en toda página — incluida la portada)
 

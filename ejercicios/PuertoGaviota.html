@@ -1,0 +1,1014 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Puerto Gaviota: el metro</title>
+
+  <!-- Tema claro/oscuro: se fija ANTES de cargar el CSS para evitar parpadeo -->
+  <script>
+    (function () {
+      const stored = localStorage.getItem('theme');
+      const theme = stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-bs-theme', theme);
+    })();
+  </script>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #app { display: flex; flex-direction: column; height: 100vh; }
+    .main-row { flex: 1 1 auto; display: flex; min-height: 0; }
+    .left-col { flex: 2 1 0; display: flex; flex-direction: column; min-width: 0; }
+    .top-row { flex: 1 1 65%; display: flex; min-height: 0; }
+    .canvas-wrap { flex: 1 1 0; position: relative; overflow: hidden; min-width: 0; }
+    canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+    .data-panel { flex: 0 1 auto; max-width: 60%; overflow: auto; display: flex; gap: .5rem; align-items: flex-start; border-left: 1px solid var(--bs-border-color); padding: .5rem; }
+    .trace-wrap { flex: 1 1 35%; overflow: auto; border-top: 1px solid var(--bs-border-color); padding: .5rem; }
+    .code-panel { flex: 1 1 0; overflow-y: auto; border-left: 1px solid var(--bs-border-color); min-width: 300px; }
+    .footer-bar { flex: 0 0 auto; padding: .25rem 0; }
+    .editor-panel { position: absolute; bottom: .75rem; left: .75rem; width: 300px; max-width: calc(100% - 1.5rem); }
+    .pseudo-code { font-family: Consolas, monospace; font-size: .8rem; white-space: pre; padding: .5rem 0; overflow-x: auto; }
+    .pseudo-line { padding: .1rem .75rem; min-height: 1.2em; }
+    .pseudo-active { background: var(--bs-warning-bg-subtle); color: var(--bs-emphasis-color); font-weight: 600; }
+    .dp-header-cell { background-color: var(--bs-secondary-bg-subtle) !important; color: var(--bs-emphasis-color) !important; }
+    .mini-table td, .mini-table th { padding: .15rem .5rem; }
+    .row-open > td:not(.cell-final) { background-color: var(--bs-warning-bg-subtle) !important; }
+    .cell-final, .pq-mst > td { background-color: var(--bs-success-bg-subtle) !important; }
+    .cell-changed { background-color: var(--bs-warning-bg-subtle) !important; }
+    .cell-path { background-color: var(--bs-info-bg-subtle) !important; }
+    .pq-discard > td { text-decoration: line-through; color: var(--bs-secondary-color); }
+    .pq-stale { text-decoration: line-through; color: var(--bs-secondary-color); }
+    .uf-link { stroke: var(--bs-secondary-color); stroke-width: 1.5; }
+    .uf-link.on-path { stroke: var(--bs-info); stroke-width: 3; }
+    .uf-link.changed { stroke: var(--bs-warning); stroke-width: 3; }
+    .uf-arrowhead { fill: var(--bs-secondary-color); }
+    .uf-label { fill: var(--bs-emphasis-color); font-size: 12px; }
+    .theory p, .theory li { font-size: .875rem; }
+    .theory ul, .theory ol { padding-left: 1.2rem; }
+    @media (max-width: 768px) {
+      #app { height: auto; }
+      .main-row, .top-row { flex-direction: column; }
+      .canvas-wrap { flex: none; height: 320px; }
+      .data-panel { max-width: none; flex-wrap: wrap; border-left: none; border-top: 1px solid var(--bs-border-color); }
+      .code-panel { border-left: none; border-top: 1px solid var(--bs-border-color); }
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <nav class="navbar navbar-dark bg-dark px-3">
+    <div class="d-flex align-items-center gap-2">
+      <a href="../index.html" class="btn btn-sm btn-outline-light" title="Volver al inicio">←</a>
+      <span class="navbar-brand mb-0 h5">🚇 Puerto Gaviota: el metro</span>
+    </div>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <span class="badge bg-secondary">Ejercicio · MST · O((N+K+M)·α(N))</span>
+      <span class="badge bg-info text-dark" v-if="currentStep" title="Subárboles (componentes conexas) que quedan por unir">Componentes = {{ currentStep.comps }}</span>
+      <span class="badge bg-success" v-if="currentStep" title="Puentes elegidos hasta ahora (peso total del MST)">🌉 Puentes = {{ currentStep.bridges }}</span>
+      <div class="btn-group btn-group-sm" v-if="nodes.length">
+        <button class="btn btn-outline-light" @click="restartAnimation" title="Reiniciar animación (mismo grafo)">⏮</button>
+        <button class="btn btn-outline-light" @click="stepBackward" :disabled="currentStepIndex === 0" title="Paso anterior">⏪</button>
+        <button class="btn btn-outline-light" @click="togglePlay" :title="isPlaying ? 'Pausar' : 'Reproducir'">{{ isPlaying ? '⏸️' : '▶️' }}</button>
+        <button class="btn btn-outline-light" @click="stepForward" :disabled="isAtEnd" title="Paso siguiente">⏩</button>
+      </div>
+      <input v-if="nodes.length" type="range" class="form-range" style="width:80px" min="150" max="2000" step="50"
+        v-model.number="speedMs" title="Velocidad de reproducción" />
+      <button class="btn btn-sm" :class="showEditor ? 'btn-light' : 'btn-outline-light'" @click="showEditor = !showEditor" title="Editar la entrada">✏️ Editar entrada</button>
+      <button class="btn btn-sm btn-outline-light" @click="fitToView(true)" title="Ajustar vista" v-if="nodes.length">🎯</button>
+      <button class="btn btn-sm" :class="newConfirm ? 'btn-warning text-dark' : 'btn-outline-light'" @click="handleNewClick" title="Volver al ejemplo de la consigna">
+        {{ newConfirm ? '¿Seguro?' : '🆕 Nuevo' }}
+      </button>
+      <button class="btn btn-sm btn-outline-light" @click="shareCurrentState" title="Copiar un link para compartir esta entrada">
+        {{ shareCopied ? '✅ Copiado' : '🔗 Compartir' }}
+      </button>
+      <button class="btn btn-sm btn-outline-light" @click="toggleTheme" :title="isDark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'">{{ isDark ? '☀️' : '🌙' }}</button>
+    </div>
+  </nav>
+
+  <div class="main-row">
+    <div class="left-col">
+      <div class="top-row">
+        <div class="canvas-wrap" ref="containerEl">
+          <canvas
+            ref="canvasEl"
+            @mousedown="onCanvasMouseDown"
+            @mousemove="onCanvasMouseMove"
+            @mouseup="onCanvasMouseUp"
+            @mouseleave="onCanvasMouseUp"
+            @wheel.prevent="onCanvasWheel"
+          ></canvas>
+
+          <div class="card shadow-sm editor-panel" v-if="showEditor">
+            <div class="card-body p-2">
+              <label class="form-label small text-muted mb-1">
+                Entrada como en la consigna: <code>N K M</code>, luego <code>K</code> túneles y <code>M</code> puentes (<code>u v</code> por línea). Hasta {{ MAX_N }} islas y {{ MAX_EDGES }} conexiones.
+              </label>
+              <textarea class="form-control form-control-sm mb-2" rows="9" v-model="inputDraft" style="font-family: monospace"></textarea>
+              <div class="alert alert-danger small py-1 px-2 mb-2" v-if="inputError">{{ inputError }}</div>
+              <button class="btn btn-dark btn-sm w-100" @click="applyInput">▶ Aplicar</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="data-panel" v-if="nodes.length && currentStep">
+          <div class="card">
+            <div class="card-header py-1 px-2 small fw-semibold">📥 Conexiones por peso (túneles, después puentes)</div>
+            <div class="card-body p-2">
+              <table class="table table-sm table-bordered text-center mb-0 mini-table small" style="width: auto;">
+                <thead>
+                  <tr><th class="dp-header-cell">tipo · peso</th><th class="dp-header-cell">u</th><th class="dp-header-cell">v</th><th class="dp-header-cell"></th></tr>
+                </thead>
+                <tbody>
+                  <tr v-if="!currentStep.list.length"><td colspan="4" class="text-muted">(sin conexiones)</td></tr>
+                  <tr v-for="(e, idx) in currentStep.list" :key="e.key" :class="ROW_CLASS[e.status]"
+                    :title="ROW_TITLE[e.status] || ''">
+                    <td>{{ e.type === 't' ? '🚇' : '🌉' }} {{ e.p }}</td>
+                    <td>{{ e.u }}</td>
+                    <td>{{ e.v }}</td>
+                    <td>
+                      <span class="badge bg-primary" v-if="idx === currentStep.nextIdx">sig.</span>
+                      <span v-else-if="e.status === 'mst'">✅</span>
+                      <span v-else-if="e.status === 'discard'">🚫</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div>
+            <div class="card mb-2">
+              <div class="card-header py-1 px-2 small fw-semibold">🔗 Union-Find: padre[]</div>
+              <div class="card-body p-2">
+                <table class="table table-sm table-bordered text-center mb-1 mini-table small" style="width: auto;">
+                  <tbody>
+                    <tr>
+                      <th class="dp-header-cell">v</th>
+                      <th class="dp-header-cell" v-for="l in sortedLabels" :key="l">{{ l }}</th>
+                    </tr>
+                    <tr>
+                      <th class="dp-header-cell">padre[v]</th>
+                      <td v-for="l in sortedLabels" :key="l" :class="padreCellClass(l)"
+                        :title="currentStep.padre[l] === l ? `${l} es raíz de su subárbol` : ''">{{ currentStep.padre[l] }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div class="small text-muted"><code>union(u, v)</code>: padre[find(v)] ← find(u)</div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header py-1 px-2 small fw-semibold">🌳 Bosque de padres</div>
+              <div class="card-body p-2" style="overflow-x: auto;">
+                <svg :width="forest.width" :height="forest.height" class="d-block">
+                  <defs>
+                    <marker id="uf-arrow" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+                      <path d="M0,0 L10,5 L0,10 z" class="uf-arrowhead" />
+                    </marker>
+                  </defs>
+                  <line v-for="l in forest.links" :key="l.from" class="uf-link" :class="forestLinkClass(l)"
+                    :x1="l.x1" :y1="l.y1" :x2="l.x2" :y2="l.y2" marker-end="url(#uf-arrow)" />
+                  <g v-for="nd in forest.nodes" :key="nd.label">
+                    <circle :cx="nd.x" :cy="nd.y" :r="UF_R" :fill="nodeFill(nd.label, currentStep)"
+                      :stroke="currentStep.findPath.includes(nd.label) ? palette().edgeActive : nodeStroke(nd.label, currentStep)"
+                      :stroke-width="currentStep.findPath.includes(nd.label) ? 3 : 1.5" />
+                    <text :x="nd.x" :y="nd.y" class="uf-label" text-anchor="middle" dominant-baseline="central">{{ nd.label }}</text>
+                  </g>
+                </svg>
+                <div class="small text-muted mt-1">Cada flecha va de un nodo a su padre; las raíces están arriba.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="trace-wrap" v-if="nodes.length && currentStep">
+        <div class="card">
+          <div class="card-header py-1 px-2 small fw-semibold">📋 Seguimiento por conexión examinada</div>
+          <div class="card-body p-2" style="overflow-x: auto;">
+            <table class="table table-sm table-bordered text-center align-middle mb-0 small">
+              <thead>
+                <tr>
+                  <th class="dp-header-cell" title="Cantidad de conexiones aceptadas hasta ahora (las descartadas no suman)">Aceptadas</th>
+                  <th class="dp-header-cell" title="Conexión (u, v) examinada en este paso">Conexión</th>
+                  <th class="dp-header-cell" title="0 para un túnel, 1 para un puente">Peso</th>
+                  <th class="dp-header-cell" title="Raíces de u y v en el Union-Find: si son distintas se unen, si son iguales la conexión formaría un ciclo">find(u) / find(v)</th>
+                  <th class="dp-header-cell" title="Subconjuntos de islas ya comunicadas por las conexiones elegidas">Subárboles</th>
+                  <th class="dp-header-cell" title="Puentes elegidos hasta ahora = peso total del MST">Puentes</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, idx) in currentStep.rows" :key="idx" :class="{ 'row-open': isOpenRow(idx) }"
+                  :title="row.discarded ? 'Conexión descartada: u y v ya estaban comunicadas' : ''">
+                  <td>{{ row.discarded ? '—' : row.iter }}</td>
+                  <td :class="{ 'pq-stale': row.discarded, 'fw-semibold': !row.discarded }">{{ row.edge ? `${row.edge.type === 't' ? '🚇' : '🌉'} (${row.edge.u}, ${row.edge.v})` : '—' }}</td>
+                  <td :class="{ 'pq-stale': row.discarded }">{{ row.edge ? row.edge.p : '—' }}</td>
+                  <td>{{ row.roots ? `${row.roots.ru} ${row.discarded ? '=' : '≠'} ${row.roots.rv}` : '—' }}</td>
+                  <td class="text-start" :class="{ 'cell-final': row.edge && !row.discarded }">{{ row.sets.map(s => fmtSet(s)).join(', ') }}</td>
+                  <td class="fw-semibold">{{ row.bridges }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="code-panel">
+      <ul class="nav nav-tabs px-3 pt-2">
+        <li class="nav-item"><button class="nav-link" :class="{ active: tab === 'pasos' }" @click="tab = 'pasos'">▶ Paso a paso</button></li>
+        <li class="nav-item"><button class="nav-link" :class="{ active: tab === 'teoria' }" @click="tab = 'teoria'">📖 Resolución</button></li>
+      </ul>
+
+      <div class="p-3" v-if="tab === 'pasos'">
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">💻 Pseudocódigo</div>
+          <div class="card-body p-0">
+            <div class="pseudo-code">
+              <div v-for="(line, idx) in PSEUDOCODE" :key="idx" class="pseudo-line"
+                :class="{ 'pseudo-active': currentStep && currentStep.activeLines.includes(idx) }">{{ line }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">🔍 Explicación</div>
+          <div class="card-body">
+            <p class="text-muted text-center py-3 mb-0" v-if="!currentStep">Cargá una entrada y presioná ▶️ o "Paso siguiente" para empezar.</p>
+            <div v-else>
+              <span class="badge fs-6 text-wrap text-start" :class="currentStep.badge.cls">{{ currentStep.badge.icon }} {{ currentStep.badge.text }}</span>
+            </div>
+            <p class="small text-muted mt-3 mb-0" v-if="currentStep">Paso {{ currentStepIndex + 1 }} de {{ steps.length }}</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header fw-semibold">Leyenda</div>
+          <ul class="list-group list-group-flush small">
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-secondary">🚇</span> Túnel (peso 0), línea gris oscura</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-primary">🌉</span> Puente (peso 1), línea azul</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-secondary">&nbsp;&nbsp;</span> Isla sola en su subárbol (color neutro); mismo color = mismo subárbol</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-info text-dark">&nbsp;&nbsp;</span> Conexión examinada, sus extremos u y v / camino que recorre find</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-warning text-dark">&nbsp;&nbsp;</span> padre[] que cambia con el union / fila en curso</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-success">&nbsp;&nbsp;</span> Conexión del metro (arista del MST)</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge border text-body">- - -</span> Conexión descartada (formaba un ciclo)</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="p-3 theory" v-else>
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">📖 Enunciado, en breve</div>
+          <div class="card-body">
+            <p>Puerto Gaviota tiene <b>N</b> islas unidas por <b>K</b> túneles y <b>M</b> puentes (bidireccionales). El metro debe comunicar todas las islas (con trasbordos), sin tramos de más, y usando <b>la menor cantidad posible de puentes</b>. El grafo completo es conexo. Se pide la cantidad mínima de puentes.</p>
+            <p class="mb-0">Con la entrada del ejemplo (6 islas, 3 túneles, 4 puentes) la respuesta es <b>2</b>. Podés cargar otras con "✏️ Editar entrada".</p>
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">1 · Modelado como árbol abarcador de costo mínimo</div>
+          <div class="card-body">
+            <ul>
+              <li><b>Grafo:</b> cada isla es un vértice; cada túnel y cada puente, una arista.</li>
+              <li><b>Pesos:</b> túnel → <code>w = 0</code>; puente → <code>w = 1</code>.</li>
+              <li><b>Por qué un árbol abarcador:</b> el metro tiene que conectar todas las islas (abarcador) y no tener tramos de más: si hubiera un ciclo se podría sacar un tramo y seguir conectado. Conexo y sin ciclos = árbol, y todo árbol abarcador tiene exactamente <code>N − 1</code> aristas.</li>
+              <li><b>Qué es el peso total:</b> como los túneles pesan 0 y los puentes 1, el peso de un árbol abarcador es <code>0·(túneles) + 1·(puentes)</code> = <b>cantidad de puentes</b> que usa. Entonces el árbol de costo mínimo es el que usa menos puentes y su peso total <b>es la respuesta</b>.</li>
+              <li><b>Algoritmo:</b> Kruskal (voraz) agrega primero las aristas más baratas que no formen ciclo, o sea todos los túneles posibles, y recién después los puentes imprescindibles. Como hay solo dos pesos no hace falta ordenar: alcanza con recorrer la lista de túneles y después la de puentes.</li>
+              <li><b>Atajo:</b> tras agregar los túneles quedan <code>c</code> componentes; como el grafo es conexo, cada puente elegido une dos componentes, y hacen falta exactamente <code>c − 1</code>. La respuesta es <code>c − 1</code>, con <code>c</code> = componentes conexas del grafo de solo túneles.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">2 · Pseudocódigo</div>
+          <div class="card-body p-0">
+            <div class="pseudo-code">
+              <div v-for="(line, idx) in PSEUDOCODE" :key="idx" class="pseudo-line">{{ line }}</div>
+            </div>
+          </div>
+          <div class="card-footer small text-muted">
+            <code>UnionFind</code> con compresión de caminos y unión por rango. La animación usa la versión ingenua (<code>padre[]</code> a secas) para que se vean los caminos de <code>find</code>.
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header fw-semibold">3 · Complejidad</div>
+          <div class="card-body">
+            <p class="mb-1">Con <code>E = K + M</code>:</p>
+            <ul>
+              <li><b>Leer la entrada:</b> Θ(N + K + M).</li>
+              <li><b>Inicializar el Union-Find:</b> Θ(N).</li>
+              <li><b>Los dos ciclos:</b> <code>E</code> iteraciones, cada una con 2 <code>find</code> y, a lo sumo, 1 <code>union</code> (en total hay a lo sumo <code>N − 1</code> uniones). Con compresión y rango, cada operación cuesta O(α(N)) amortizado, donde α es la inversa de Ackermann (α(N) ≤ 4 para cualquier N que pueda existir).</li>
+              <li><b>No se ordena:</b> hay solo dos pesos, así que las dos pasadas reemplazan al sort (un ordenamiento por conteo en O(E)).</li>
+            </ul>
+            <p class="mb-1"><b>Total:</b> <code>O(N + (K + M)·α(N))</code>, que en la práctica es lineal, O(N + K + M). Espacio: O(N + K + M).</p>
+            <p class="mb-1">Con los límites (<code>N ≤ 10 000</code>, <code>K, M ≤ 12 000</code>, o sea <code>E ≤ 24 000</code>):</p>
+            <ul class="mb-0">
+              <li>Esta solución: del orden de 10⁵ operaciones.</li>
+              <li>Kruskal clásico ordenando las aristas: O(E log E) = O(E log N) (porque E ≤ N², log E ≤ 2 log N), unas 3,5·10⁵ operaciones. También entra de sobra.</li>
+              <li>Union-Find ingenuo (el de la animación): cada <code>find</code> puede costar O(N) en el peor caso, o sea O(E·N), del orden de 10⁸. Todavía pasa, pero es mil veces más que con compresión y rango.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-bar text-center small border-top">
+    <p> Hecho con ❤️ por <a href="https://github.com/programacion-avanzada">Programación Avanzada</a> (y <a href="https://claude.ai">Claude</a>)</p>
+  </div>
+
+</div>
+
+<script>
+const { createApp, ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } = Vue;
+
+const PSEUDOCODE = [
+  'ALGORITMO PuertoGaviota(N, túneles, puentes)',
+  '    conjuntos ← UnionFind(N)',
+  '    componentes ← N',
+  '    puentesUsados ← 0',
+  '',
+  '    // Fase 1: túneles (peso 0), entran todos los que no formen ciclo',
+  '    PARA CADA (u, v) EN túneles HACER',
+  '        SI conjuntos.find(u) ≠ conjuntos.find(v) ENTONCES',
+  '            conjuntos.union(u, v)',
+  '            componentes ← componentes - 1',
+  '',
+  '    // Fase 2: puentes (peso 1), solo los que hagan falta',
+  '    PARA CADA (u, v) EN puentes HACER',
+  '        SI componentes = 1 ENTONCES',
+  '            TERMINAR EL CICLO',
+  '        SI conjuntos.find(u) ≠ conjuntos.find(v) ENTONCES',
+  '            conjuntos.union(u, v)',
+  '            componentes ← componentes - 1',
+  '            puentesUsados ← puentesUsados + 1',
+  '',
+  '    RETORNAR puentesUsados',
+];
+
+// Ejemplo de la consigna: 6 islas, 3 túneles y 4 puentes → respuesta 2.
+const DEFAULT_INPUT = '6 3 4\n1 2\n2 3\n4 5\n1 3\n3 4\n4 6\n5 6';
+const DEFAULT_POSITIONS = {
+  '1': { x: -200, y: 60 }, '2': { x: -120, y: -80 }, '3': { x: -40, y: 60 },
+  '4': { x: 60, y: 60 }, '5': { x: 140, y: -80 }, '6': { x: 220, y: 60 },
+};
+
+// Tope para que el dibujo siga siendo legible (la consigna admite hasta N = 10.000).
+const MAX_N = 30, MAX_EDGES = 80;
+
+const ROW_CLASS = { current: 'row-open', mst: 'pq-mst', discard: 'pq-discard' };
+const ROW_TITLE = { mst: 'Examinada: entró al metro', discard: 'Examinada: se descartó porque formaba un ciclo' };
+
+// Bosque del Union-Find: radio de nodo y separación entre hojas / niveles (px).
+const UF_R = 13, UF_DX = 36, UF_DY = 46;
+
+function edgeKey(a, b) { return [a, b].sort().join('|'); }
+// Orden de los nodos en los conjuntos: numérico si todas las etiquetas son números,
+// si no lexicográfico ("10" antes que "2", "A10" antes que "A2").
+function sortLabels(labels) {
+  const allNumeric = labels.every(l => l.trim() !== '' && !isNaN(l));
+  return [...labels].sort(allNumeric
+    ? (a, b) => Number(a) - Number(b)
+    : (a, b) => a.localeCompare(b, 'es'));
+}
+function fmtSet(labels) { return labels.length ? `{${labels.join(', ')}}` : '∅'; }
+function plural(n, word) { return `${n} ${word}${n === 1 ? '' : 's'}`; }
+const typeName = type => (type === 't' ? 'túnel' : 'puente');
+
+// ── Parseo de la entrada con el formato de la consigna: "N K M", K túneles y M puentes.
+// Las islas son 1..N (las que no aparecen en ninguna conexión quedan aisladas). Los túneles van
+// antes que los puentes en `edges`: ya es el orden por peso (0 antes que 1). Si hay varias
+// conexiones entre el mismo par de islas, `off` las separa al dibujarlas.
+function parseInput(text) {
+  const nums = text.split(/\s+/).filter(Boolean).map(Number);
+  if (nums.some(x => !Number.isInteger(x))) return { error: 'Solo se admiten números enteros separados por espacios o saltos de línea.' };
+  if (nums.length < 3) return { error: 'Faltan los tres primeros números: N, K y M.' };
+  const [N, K, M] = nums;
+  if (N < 1 || N > MAX_N) return { error: `N debe estar entre 1 y ${MAX_N} (para poder dibujarlo).` };
+  if (K < 0 || M < 0) return { error: 'K y M no pueden ser negativos.' };
+  if (K + M > MAX_EDGES) return { error: `K + M no puede pasar de ${MAX_EDGES} conexiones (para poder dibujarlo).` };
+  const expected = 3 + 2 * (K + M);
+  if (nums.length !== expected) return { error: `Con K = ${K} y M = ${M} se esperan ${expected} números en total y hay ${nums.length}.` };
+
+  const edges = [];
+  for (let i = 0; i < K + M; i++) {
+    const a = nums[3 + 2 * i], b = nums[4 + 2 * i];
+    if (a < 1 || a > N || b < 1 || b > N) return { error: `La conexión ${i + 1} usa una isla fuera de 1..${N}.` };
+    const type = i < K ? 't' : 'p';
+    edges.push({ a: String(a), b: String(b), type, w: type === 't' ? 0 : 1, key: `${type}${i}`, off: 0 });
+  }
+  const groups = new Map();
+  for (const e of edges) {
+    const k = edgeKey(e.a, e.b);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e);
+  }
+  for (const g of groups.values()) g.forEach((e, i) => { e.off = i - (g.length - 1) / 2; });
+
+  return { nodeLabels: Array.from({ length: N }, (_, i) => String(i + 1)), edges };
+}
+
+// ── Simula el pseudocódigo con un Union-Find ingenuo (padre[], sin rango ni compresión):
+// find sube por padre[] hasta la raíz, union(u, v) hace padre[find(v)] ← find(u).
+// Arma además la tabla de seguimiento: una fila por conexión examinada (las descartadas, tachadas).
+function computeSteps(nodeLabels, edges) {
+  const steps = [];
+  const n = nodeLabels.length;
+  if (!n) return steps;
+
+  const status = {};
+  const padre = {};
+  for (const l of nodeLabels) padre[l] = l;
+  // Color de cada subárbol con más de un vértice, guardado en su raíz: al unir, sobrevive el color
+  // de la raíz nueva (o el del subárbol que se cuelga, si la raíz nueva estaba sola).
+  const compColor = {};
+  let nextColor = 0;
+  let comps = n, bridges = 0, accepted = 0;
+  const edgeClass = {};
+  const rows = [];
+  let highlightEdge = null, endpoints = [], findPath = [], changedNode = null, openRow = false, done = false;
+
+  function find(x) {
+    const path = [x];
+    while (padre[x] !== x) { x = padre[x]; path.push(x); }
+    return { root: x, path };
+  }
+  function subtrees() {
+    const groups = new Map();
+    for (const l of sortLabels(nodeLabels)) {
+      const r = find(l).root;
+      if (!groups.has(r)) groups.set(r, []);
+      groups.get(r).push(l);
+    }
+    return [...groups.values()];
+  }
+  function pushRow(edge, roots, discarded) {
+    rows.push({ iter: accepted, edge, roots, discarded, sets: subtrees(), bridges });
+  }
+  function snapshot(activeLines, badge) {
+    const colorOf = {};
+    for (const l of nodeLabels) colorOf[l] = compColor[find(l).root] ?? -1;
+    steps.push({
+      activeLines,
+      list: edges.map(e => ({ p: e.w, u: e.a, v: e.b, type: e.type, key: e.key, status: status[e.key] })),
+      nextIdx: done ? -1 : edges.findIndex(e => !status[e.key]),
+      padre: { ...padre },
+      colorOf, findPath, changedNode,
+      comps, bridges,
+      edgeClass: { ...edgeClass },
+      highlightEdge, endpoints,
+      rows: [...rows],
+      openRow,
+      badge,
+    });
+  }
+
+  // Examina una conexión: find de los dos extremos y, si están separados, union.
+  // L trae las líneas del pseudocódigo de la fase en curso (túneles o puentes).
+  function examine(e, L) {
+    const { a: u, b: v, w: p, key, type } = e;
+    const name = typeName(type);
+    const fu = find(u), fv = find(v);
+    for (const [x, f] of [[u, fu], [v, fv]]) {
+      findPath = f.path;
+      snapshot(L.find, {
+        icon: '🔎',
+        text: f.path.length === 1
+          ? `find(${x}) = ${x}: "${x}" es raíz de su subárbol (padre[${x}] = ${x}).`
+          : `find(${x}): se sube por padre[] ${f.path.join(' → ')} hasta la raíz, find(${x}) = ${f.root}.`,
+        cls: 'bg-info text-dark',
+      });
+    }
+    findPath = [];
+    const roots = { ru: fu.root, rv: fv.root };
+
+    if (fu.root === fv.root) {
+      status[key] = 'discard';
+      edgeClass[key] = 'discard';
+      pushRow({ u, v, p, type }, roots, true);
+      highlightEdge = null; endpoints = []; openRow = true;
+      snapshot(L.find, { icon: '🚫', text: `find(${u}) = find(${v}) = ${fu.root}: las islas ${u} y ${v} ya se comunican, el ${name} (${u}, ${v}) formaría un ciclo y no se construye.`, cls: 'bg-danger' });
+      openRow = false;
+      return;
+    }
+
+    padre[fv.root] = fu.root;
+    compColor[fu.root] = compColor[fu.root] ?? compColor[fv.root] ?? nextColor++;
+    delete compColor[fv.root];
+    changedNode = fv.root;
+    snapshot(L.union, { icon: '🔗', text: `find(${u}) = ${fu.root} ≠ ${fv.root} = find(${v}): están en subárboles distintos. union: padre[${fv.root}] ← ${fu.root}, el subárbol de "${fv.root}" pasa a colgar de "${fu.root}".`, cls: 'bg-primary' });
+    changedNode = null;
+
+    comps--;
+    accepted++;
+    if (type === 'p') bridges++;
+    status[key] = 'mst';
+    edgeClass[key] = 'mst';
+    pushRow({ u, v, p, type }, roots, false);
+    highlightEdge = null; endpoints = []; openRow = true;
+    snapshot(L.count, {
+      icon: '✅',
+      text: type === 't'
+        ? `El túnel (${u}, ${v}) entra al metro, no cuesta ningún puente (peso 0). Quedan ${plural(comps, 'componente')}.`
+        : `El puente (${u}, ${v}) entra al metro: puentesUsados = ${bridges - 1} + 1 = ${bridges}. Quedan ${plural(comps, 'componente')}.`,
+      cls: 'bg-success',
+    });
+    openRow = false;
+  }
+
+  snapshot([1, 2, 3], { icon: '🏗️', text: `Cada isla es su propio subárbol (padre[v] = v): componentes = ${n}, puentesUsados = 0.`, cls: 'bg-secondary' });
+
+  const tunnels = edges.filter(e => e.type === 't');
+  const bridgeList = edges.filter(e => e.type === 'p');
+
+  snapshot([5, 6], { icon: '🚇', text: `Fase 1: se recorren los ${plural(tunnels.length, 'túnel')} (peso 0). Entran todos los que no formen ciclo, sin costo en puentes.`, cls: 'bg-primary' });
+  for (const e of tunnels) {
+    status[e.key] = 'current';
+    highlightEdge = e.key;
+    endpoints = [e.a, e.b];
+    snapshot([6], { icon: '📤', text: `Se toma el túnel (${e.a}, ${e.b}).`, cls: 'bg-warning text-dark' });
+    examine(e, { find: [7], union: [7, 8], count: [9] });
+  }
+
+  const sets = subtrees();
+  snapshot([11, 12], {
+    icon: '🌉',
+    text: sets.length === 1
+      ? `Fase 2: con los túneles ya alcanza, componentes = 1. No hace falta ningún puente.`
+      : `Fase 2: tras los túneles quedan ${plural(sets.length, 'componente')} (${sets.map(s => fmtSet(s)).join(', ')}). Como el grafo es conexo, hacen falta exactamente ${sets.length - 1} de los ${plural(bridgeList.length, 'puente')}.`,
+    cls: 'bg-primary',
+  });
+  for (let i = 0; i < bridgeList.length; i++) {
+    const e = bridgeList[i];
+    if (comps === 1) {
+      const rest = bridgeList.length - i;
+      done = true;
+      snapshot([12, 13, 14], { icon: '🛑', text: `componentes = 1: ya se pueden recorrer todas las islas. ${rest === 1 ? 'El puente que queda' : `Los ${rest} puentes que quedan`} no hace falta mirarlo, se termina el ciclo.`, cls: 'bg-secondary' });
+      break;
+    }
+    status[e.key] = 'current';
+    highlightEdge = e.key;
+    endpoints = [e.a, e.b];
+    snapshot([12, 13], { icon: '📤', text: `Se toma el puente (${e.a}, ${e.b}). componentes = ${comps} > 1: todavía falta comunicar islas.`, cls: 'bg-warning text-dark' });
+    examine(e, { find: [15], union: [15, 16], count: [17, 18] });
+  }
+
+  done = true;
+  if (comps === 1) {
+    snapshot([20], { icon: '🏁', text: `Se retorna puentesUsados = ${bridges}: es el mínimo de puentes del metro (peso total del MST).`, cls: 'bg-success' });
+  } else {
+    snapshot([20], { icon: '⚠️', text: `Se retorna puentesUsados = ${bridges}, pero quedaron ${comps} componentes: el grafo no es conexo, y la consigna lo garantiza.`, cls: 'bg-warning text-dark' });
+  }
+  return steps;
+}
+
+// ── Layout del bosque del Union-Find: raíces arriba en orden de etiqueta, ancho de cada
+// subárbol proporcional a su cantidad de hojas, Y fija por profundidad.
+function forestLayout(padre) {
+  const labels = sortLabels(Object.keys(padre));
+  const children = {};
+  for (const l of labels) children[l] = [];
+  for (const l of labels) if (padre[l] !== l) children[padre[l]].push(l);
+  const leaves = l => children[l].length ? children[l].reduce((s, c) => s + leaves(c), 0) : 1;
+  const pos = {};
+  let maxDepth = 0;
+  function place(l, left, depth) {
+    pos[l] = { x: (left + leaves(l) / 2) * UF_DX, y: depth * UF_DY + UF_R + 4 };
+    maxDepth = Math.max(maxDepth, depth);
+    let x = left;
+    for (const c of children[l]) { place(c, x, depth + 1); x += leaves(c); }
+  }
+  let left = 0;
+  for (const l of labels) if (padre[l] === l) { place(l, left, 0); left += leaves(l); }
+
+  // Flecha hijo → padre, recortada en el borde de ambos círculos.
+  const links = labels.filter(l => padre[l] !== l).map(l => {
+    const a = pos[l], b = pos[padre[l]];
+    const d = Math.hypot(b.x - a.x, b.y - a.y), ux = (b.x - a.x) / d, uy = (b.y - a.y) / d;
+    return { from: l, to: padre[l], x1: a.x + ux * UF_R, y1: a.y + uy * UF_R, x2: b.x - ux * UF_R, y2: b.y - uy * UF_R };
+  });
+  return {
+    nodes: labels.map(l => ({ label: l, ...pos[l] })),
+    links,
+    width: left * UF_DX,
+    height: maxDepth * UF_DY + 2 * (UF_R + 4),
+  };
+}
+
+// ── Layout inicial circular: los nodos que ya tenían posición la conservan,
+// los nuevos se ubican en círculo según su índice en la lista total de nodos.
+function layoutNodes(nodeLabels, existingPositions) {
+  const R = 160;
+  const positions = {};
+  nodeLabels.forEach((label, i) => {
+    if (existingPositions[label]) { positions[label] = existingPositions[label]; return; }
+    const angle = (i / nodeLabels.length) * Math.PI * 2 - Math.PI / 2;
+    positions[label] = { x: Math.cos(angle) * R, y: Math.sin(angle) * R };
+  });
+  return positions;
+}
+
+createApp({
+  setup() {
+    const STORAGE_KEY = 'pa-tools-ejercicios-puerto-gaviota';
+    const NODE_R = 22;
+    const PADDING = 50;
+    const PARALLEL_GAP = 36;
+
+    const nodes = ref([]);
+    const edges = ref([]);
+    const tab = ref('pasos');
+
+    const steps = ref([]);
+    const currentStepIndex = ref(0);
+    const isPlaying = ref(false);
+    const speedMs = ref(700);
+    let playTimer = null;
+
+    const showEditor = ref(false);
+    const inputDraft = ref(DEFAULT_INPUT);
+    const inputError = ref('');
+
+    const camera = reactive({ offsetX: 0, offsetY: 0, scale: 1 });
+    const userAdjustedCamera = ref(false);
+    const isDark = ref(document.documentElement.getAttribute('data-bs-theme') === 'dark');
+
+    const canvasEl = ref(null);
+    const containerEl = ref(null);
+
+    const currentStep = computed(() => steps.value[currentStepIndex.value] || null);
+    const isAtEnd = computed(() => currentStepIndex.value >= steps.value.length - 1);
+    const sortedLabels = computed(() => sortLabels(nodes.value.map(n => n.label)));
+    const forest = computed(() => currentStep.value ? forestLayout(currentStep.value.padre) : null);
+
+    function isOpenRow(idx) {
+      const s = currentStep.value;
+      return s.openRow && idx === s.rows.length - 1;
+    }
+    function padreCellClass(label) {
+      const s = currentStep.value;
+      return {
+        'cell-changed': s.changedNode === label,
+        'cell-path': s.findPath.includes(label),
+        'fw-bold': s.padre[label] === label,
+      };
+    }
+    function forestLinkClass(link) {
+      const s = currentStep.value;
+      const i = s.findPath.indexOf(link.from);
+      return { 'on-path': i >= 0 && s.findPath[i + 1] === link.to, changed: s.changedNode === link.from };
+    }
+
+    // ── Persistencia ──
+    function positionsMap() {
+      const m = {};
+      for (const n of nodes.value) m[n.label] = { x: n.x, y: n.y };
+      return m;
+    }
+    function currentState() {
+      return { input: inputDraft.value, positions: positionsMap() };
+    }
+    function applyState(data) {
+      const text = data.input ?? inputDraft.value;
+      const parsed = parseInput(text);
+      if (parsed.error) throw new Error(parsed.error);
+      inputDraft.value = text;
+      const posMap = layoutNodes(parsed.nodeLabels, data.positions || {});
+      nodes.value = parsed.nodeLabels.map(label => ({ label, x: posMap[label].x, y: posMap[label].y }));
+      edges.value = parsed.edges;
+      regenerateSteps();
+    }
+    function persist() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(currentState()));
+    }
+    function loadFromStorage() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) { resetToDefault(); return; }
+        applyState(JSON.parse(raw));
+      } catch (e) { resetToDefault(); }
+    }
+
+    // ── Compartir por URL (#d=...) ──
+    function encodeState(data) { return encodeURIComponent(JSON.stringify(data)); }
+    function decodeState(str) { return JSON.parse(decodeURIComponent(str)); }
+
+    function loadInitialState() {
+      if (location.hash.startsWith('#d=')) {
+        try {
+          applyState(decodeState(location.hash.slice(3)));
+          history.replaceState(null, '', location.pathname + location.search);
+          persist();
+          return;
+        } catch (e) { console.error('No se pudo leer la entrada de la URL:', e); }
+      }
+      loadFromStorage();
+    }
+
+    const shareCopied = ref(false);
+    function shareCurrentState() {
+      const url = `${location.origin}${location.pathname}#d=${encodeState(currentState())}`;
+      const onCopied = () => { shareCopied.value = true; setTimeout(() => { shareCopied.value = false; }, 2000); };
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(url).then(onCopied).catch(() => window.prompt('Copiá el link:', url));
+      } else {
+        window.prompt('Copiá el link:', url);
+      }
+    }
+
+    // ── "Nuevo" (2 pasos) ──
+    const newConfirm = ref(false);
+    function handleNewClick() {
+      if (newConfirm.value) { resetToDefault(); return; }
+      newConfirm.value = true;
+      setTimeout(() => { newConfirm.value = false; }, 3000);
+    }
+    function resetToDefault() {
+      newConfirm.value = false;
+      inputError.value = '';
+      applyState({ input: DEFAULT_INPUT, positions: DEFAULT_POSITIONS });
+      persist();
+      userAdjustedCamera.value = false;
+      nextTick(() => { resizeCanvasToDisplaySize(); fitToView(); });
+    }
+
+    // ── Editar la entrada ──
+    function applyInput() {
+      const { error } = parseInput(inputDraft.value);
+      inputError.value = error || '';
+      if (error) return;
+      applyState({ input: inputDraft.value, positions: positionsMap() });
+      persist();
+      userAdjustedCamera.value = false;
+      nextTick(() => { resizeCanvasToDisplaySize(); fitToView(); });
+    }
+
+    // ── Reproducción ──
+    function regenerateSteps() {
+      steps.value = computeSteps(nodes.value.map(n => n.label), edges.value);
+      currentStepIndex.value = 0;
+      stopAutoplay();
+      draw();
+    }
+    function goToStep(i) {
+      currentStepIndex.value = Math.max(0, Math.min(steps.value.length - 1, i));
+      draw();
+    }
+    function stepForward() { if (!isAtEnd.value) goToStep(currentStepIndex.value + 1); else stopAutoplay(); }
+    function stepBackward() { goToStep(currentStepIndex.value - 1); }
+    function restartAnimation() { stopAutoplay(); goToStep(0); }
+    function stopAutoplay() {
+      isPlaying.value = false;
+      if (playTimer) { clearInterval(playTimer); playTimer = null; }
+    }
+    function togglePlay() {
+      if (isPlaying.value) { stopAutoplay(); return; }
+      if (isAtEnd.value) goToStep(0);
+      isPlaying.value = true;
+      playTimer = setInterval(() => {
+        if (isAtEnd.value) { stopAutoplay(); return; }
+        stepForward();
+      }, speedMs.value);
+    }
+
+    // ── Cámara: pan / zoom (igual que recursion/call-tree.html) ──
+    function worldToScreen(x, y) {
+      return { x: x * camera.scale + camera.offsetX, y: y * camera.scale + camera.offsetY };
+    }
+    function screenToWorld(x, y) {
+      return { x: (x - camera.offsetX) / camera.scale, y: (y - camera.offsetY) / camera.scale };
+    }
+    function fitToView(manual) {
+      if (!nodes.value.length || !containerEl.value) return;
+      const xs = nodes.value.map(n => n.x), ys = nodes.value.map(n => n.y);
+      const minX = Math.min(...xs) - NODE_R, maxX = Math.max(...xs) + NODE_R;
+      const minY = Math.min(...ys) - NODE_R, maxY = Math.max(...ys) + NODE_R;
+      const w = containerEl.value.clientWidth, h = containerEl.value.clientHeight;
+      const contentW = Math.max(maxX - minX, 1), contentH = Math.max(maxY - minY, 1);
+      camera.scale = Math.max(0.2, Math.min((w - PADDING * 2) / contentW, (h - PADDING * 2) / contentH, 1.6));
+      camera.offsetX = w / 2 - (minX + maxX) / 2 * camera.scale;
+      camera.offsetY = h / 2 - (minY + maxY) / 2 * camera.scale;
+      if (manual) userAdjustedCamera.value = false;
+      draw();
+    }
+
+    function hitTestNode(sx, sy) {
+      for (let i = nodes.value.length - 1; i >= 0; i--) {
+        const n = nodes.value[i];
+        const p = worldToScreen(n.x, n.y);
+        if (Math.hypot(sx - p.x, sy - p.y) <= NODE_R * camera.scale) return n;
+      }
+      return null;
+    }
+
+    // ── Mouse: arrastrar un nodo si el mousedown empieza sobre él, si no, pan de cámara ──
+    let isPanning = false, panStart = null;
+    let draggingNode = null;
+    function onCanvasMouseDown(e) {
+      const hit = hitTestNode(e.offsetX, e.offsetY);
+      if (hit) { draggingNode = hit; return; }
+      isPanning = true;
+      panStart = { x: e.offsetX, y: e.offsetY, offsetX: camera.offsetX, offsetY: camera.offsetY };
+      canvasEl.value.style.cursor = 'grabbing';
+    }
+    function onCanvasMouseMove(e) {
+      if (draggingNode) {
+        const w = screenToWorld(e.offsetX, e.offsetY);
+        draggingNode.x = w.x;
+        draggingNode.y = w.y;
+        draw();
+        return;
+      }
+      if (!isPanning) return;
+      camera.offsetX = panStart.offsetX + (e.offsetX - panStart.x);
+      camera.offsetY = panStart.offsetY + (e.offsetY - panStart.y);
+      userAdjustedCamera.value = true;
+      draw();
+    }
+    function onCanvasMouseUp() {
+      if (draggingNode) { draggingNode = null; persist(); }
+      isPanning = false;
+      if (canvasEl.value) canvasEl.value.style.cursor = 'grab';
+    }
+    function onCanvasWheel(e) {
+      const rect = canvasEl.value.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      const before = screenToWorld(mx, my);
+      camera.scale = Math.min(3, Math.max(0.2, camera.scale * (e.deltaY < 0 ? 1.1 : 0.9)));
+      const after = worldToScreen(before.x, before.y);
+      camera.offsetX += mx - after.x;
+      camera.offsetY += my - after.y;
+      userAdjustedCamera.value = true;
+      draw();
+    }
+
+    // ── Paleta de color por tema (Canvas no puede leer var(--bs-*)) ──
+    // comp*: un tono por subárbol (sin celeste, que queda para la conexión en juego).
+    const PALETTES = {
+      light: {
+        bg: '#ffffff', nodeText: '#212529', edgeTunnel: '#495057', edgeBridge: '#0d6efd', edgeTree: '#198754', edgeActive: '#0dcaf0', weightText: '#495057',
+        nodeFill: '#e9ecef', nodeStroke: '#6c757d',
+        compFill: ['#cfe2ff', '#f8d7da', '#e2d9f3', '#ffe5d0', '#d1e7dd', '#f7d6e6', '#fff3cd', '#d2f4ea'],
+        compStroke: ['#0d6efd', '#dc3545', '#6f42c1', '#fd7e14', '#198754', '#d63384', '#ffc107', '#20c997'],
+      },
+      dark: {
+        bg: '#212529', nodeText: '#f8f9fa', edgeTunnel: '#adb5bd', edgeBridge: '#6ea8fe', edgeTree: '#75b798', edgeActive: '#6edff6', weightText: '#dee2e6',
+        nodeFill: '#343a40', nodeStroke: '#adb5bd',
+        compFill: ['#0a3a7a', '#842029', '#3d2a6b', '#7a3d0b', '#0f5132', '#6b1f45', '#664d03', '#0b5345'],
+        compStroke: ['#6ea8fe', '#ea868f', '#a98eda', '#feb272', '#75b798', '#e685b5', '#ffda6a', '#79dfc1'],
+      },
+    };
+    function palette() { return PALETTES[isDark.value ? 'dark' : 'light']; }
+    // ponytail: con más de 8 subárboles simultáneos los colores se repiten; sumar tonos si hace falta.
+    function nodeFill(label, step) {
+      const pal = palette(), c = step ? step.colorOf[label] : -1;
+      return c >= 0 ? pal.compFill[c % pal.compFill.length] : pal.nodeFill;
+    }
+    function nodeStroke(label, step) {
+      const pal = palette(), c = step ? step.colorOf[label] : -1;
+      return c >= 0 ? pal.compStroke[c % pal.compStroke.length] : pal.nodeStroke;
+    }
+
+    function nodeByLabel(label) { return nodes.value.find(n => n.label === label); }
+
+    // Curva de una conexión en pantalla: recta si es la única entre sus dos islas, o un arco
+    // (cuadrática, control = punto medio corrido en la perpendicular) si hay varias en paralelo.
+    function edgeGeom(e) {
+      const [lo, hi] = [e.a, e.b].sort();
+      const from = nodeByLabel(lo), to = nodeByLabel(hi);
+      if (!from || !to) return null;
+      const p1 = worldToScreen(from.x, from.y), p2 = worldToScreen(to.x, to.y);
+      const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+      const len = Math.hypot(p2.x - p1.x, p2.y - p1.y) || 1;
+      const bow = e.off * PARALLEL_GAP * camera.scale;
+      const px = -(p2.y - p1.y) / len * bow, py = (p2.x - p1.x) / len * bow;
+      return { p1, p2, c: { x: mx + px * 2, y: my + py * 2 }, label: { x: mx + px, y: my + py } };
+    }
+
+    function resizeCanvasToDisplaySize() {
+      const canvas = canvasEl.value, container = containerEl.value;
+      if (!canvas || !container) return;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = container.clientWidth * dpr;
+      canvas.height = container.clientHeight * dpr;
+      canvas.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function draw() {
+      const canvas = canvasEl.value;
+      if (!canvas || !containerEl.value) return;
+      const ctx = canvas.getContext('2d');
+      const w = containerEl.value.clientWidth, h = containerEl.value.clientHeight;
+      const pal = palette();
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = pal.bg;
+      ctx.fillRect(0, 0, w, h);
+
+      const step = currentStep.value;
+      const hlKey = step ? step.highlightEdge : null;
+      const r = NODE_R * camera.scale;
+
+      for (const e of edges.value) {
+        if (e.a === e.b) continue;
+        const g = edgeGeom(e);
+        if (!g) continue;
+        const cls = step ? step.edgeClass[e.key] : undefined;
+        const isActive = e.key === hlKey;
+        const base = e.type === 't' ? pal.edgeTunnel : pal.edgeBridge;
+        const color = isActive ? pal.edgeActive : cls === 'mst' ? pal.edgeTree : base;
+
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = isActive ? 4 : cls === 'mst' ? 3.5 : 1.5;
+        if (cls === 'discard' && !isActive) { ctx.setLineDash([6, 5]); ctx.globalAlpha = 0.6; }
+        ctx.beginPath();
+        ctx.moveTo(g.p1.x, g.p1.y);
+        ctx.quadraticCurveTo(g.c.x, g.c.y, g.p2.x, g.p2.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+
+        // Tipo y peso en el punto medio de la conexión.
+        const text = `${e.type === 't' ? '🚇' : '🌉'} ${e.w}`;
+        ctx.font = `bold ${Math.max(10, 13 * camera.scale)}px system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const tw = ctx.measureText(text).width + 6;
+        const th = Math.max(14, 17 * camera.scale);
+        ctx.fillStyle = pal.bg;
+        ctx.fillRect(g.label.x - tw / 2, g.label.y - th / 2, tw, th);
+        ctx.fillStyle = color === base ? pal.weightText : color;
+        ctx.fillText(text, g.label.x, g.label.y);
+        ctx.restore();
+      }
+
+      for (const n of nodes.value) {
+        const p = worldToScreen(n.x, n.y);
+        const isEndpoint = step && step.endpoints.includes(n.label);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = nodeFill(n.label, step);
+        ctx.fill();
+        ctx.lineWidth = isEndpoint ? 4 : 1.5;
+        ctx.strokeStyle = isEndpoint ? pal.edgeActive : nodeStroke(n.label, step);
+        ctx.stroke();
+
+        ctx.fillStyle = pal.nodeText;
+        ctx.textAlign = 'center';
+        ctx.font = `${Math.max(10, 13 * camera.scale)}px system-ui, sans-serif`;
+        ctx.textBaseline = 'middle';
+        ctx.fillText(n.label, p.x, p.y);
+      }
+    }
+
+    // ── Tema claro/oscuro ──
+    function toggleTheme() {
+      isDark.value = !isDark.value;
+      const theme = isDark.value ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-bs-theme', theme);
+      localStorage.setItem('theme', theme);
+      draw();
+    }
+
+    // ── Ciclo de vida ──
+    function handleContainerResize() {
+      resizeCanvasToDisplaySize();
+      if (!userAdjustedCamera.value) fitToView();
+      draw();
+    }
+    // ResizeObserver y no window.resize: el canvas también cambia de tamaño cuando
+    // el panel de datos o la tabla de seguimiento cambian según su contenido.
+    const resizeObserver = new ResizeObserver(handleContainerResize);
+    onMounted(() => {
+      loadInitialState();
+      resizeCanvasToDisplaySize();
+      fitToView();
+      draw();
+      resizeObserver.observe(containerEl.value);
+    });
+    onBeforeUnmount(() => {
+      resizeObserver.disconnect();
+      stopAutoplay();
+    });
+
+    return {
+      nodes, PSEUDOCODE, ROW_CLASS, ROW_TITLE, UF_R, MAX_N, MAX_EDGES, tab,
+      steps, currentStepIndex, currentStep, isAtEnd, sortedLabels, forest,
+      isOpenRow, padreCellClass, forestLinkClass, fmtSet, palette, nodeFill, nodeStroke,
+      isPlaying, speedMs, togglePlay, stepForward, stepBackward, restartAnimation,
+      showEditor, inputDraft, inputError, applyInput,
+      newConfirm, handleNewClick, shareCopied, shareCurrentState,
+      isDark, toggleTheme, fitToView,
+      canvasEl, containerEl, onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseUp, onCanvasWheel,
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

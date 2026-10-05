@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rescatando a la Princesa</title>
+
+  <!-- Tema claro/oscuro: se fija ANTES de cargar el CSS para evitar parpadeo -->
+  <script>
+    (function () {
+      const stored = localStorage.getItem('theme');
+      const theme = stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-bs-theme', theme);
+    })();
+  </script>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #app { display: flex; flex-direction: column; height: 100vh; }
+    .main-row { flex: 1 1 auto; display: flex; min-height: 0; }
+    .left-col { flex: 2 1 0; display: flex; flex-direction: column; min-width: 0; }
+    .top-row { flex: 1 1 65%; display: flex; min-height: 0; }
+    .canvas-wrap { flex: 1 1 0; position: relative; overflow: hidden; min-width: 0; }
+    canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+    .data-panel { flex: 0 1 auto; max-width: 50%; overflow: auto; display: flex; gap: .5rem; align-items: flex-start; border-left: 1px solid var(--bs-border-color); padding: .5rem; }
+    .trace-wrap { flex: 1 1 35%; overflow: auto; border-top: 1px solid var(--bs-border-color); padding: .5rem; }
+    .code-panel { flex: 1 1 0; overflow-y: auto; border-left: 1px solid var(--bs-border-color); min-width: 300px; }
+    .footer-bar { flex: 0 0 auto; padding: .25rem 0; }
+    .editor-panel { position: absolute; bottom: .75rem; left: .75rem; width: 300px; max-width: calc(100% - 1.5rem); }
+    .pseudo-code { font-family: Consolas, monospace; font-size: .8rem; white-space: pre; padding: .5rem 0; overflow-x: auto; }
+    .pseudo-line { padding: .1rem .75rem; min-height: 1.2em; }
+    .pseudo-active { background: var(--bs-warning-bg-subtle); color: var(--bs-emphasis-color); font-weight: 600; }
+    .dp-header-cell { background-color: var(--bs-secondary-bg-subtle) !important; color: var(--bs-emphasis-color) !important; }
+    .mini-table td, .mini-table th { padding: .15rem .5rem; }
+    .row-open > td:not(.cell-changed):not(.cell-final), .row-open > th { background-color: var(--bs-warning-bg-subtle) !important; }
+    .cell-changed { background-color: var(--bs-primary-bg-subtle) !important; font-weight: 700; }
+    .cell-final { background-color: var(--bs-success-bg-subtle) !important; }
+    .cell-target { background-color: var(--bs-info-bg-subtle) !important; outline: 2px solid var(--bs-info-border-subtle); }
+    .pq-stale { text-decoration: line-through; color: var(--bs-secondary-color); }
+    .theory p, .theory li { font-size: .875rem; }
+    .theory ul, .theory ol { padding-left: 1.2rem; }
+    @media (max-width: 768px) {
+      #app { height: auto; }
+      .main-row, .top-row { flex-direction: column; }
+      .canvas-wrap { flex: none; height: 320px; }
+      .data-panel { max-width: none; flex-wrap: wrap; border-left: none; border-top: 1px solid var(--bs-border-color); }
+      .code-panel { border-left: none; border-top: 1px solid var(--bs-border-color); }
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <nav class="navbar navbar-dark bg-dark px-3">
+    <div class="d-flex align-items-center gap-2">
+      <a href="../index.html" class="btn btn-sm btn-outline-light" title="Volver al inicio">←</a>
+      <span class="navbar-brand mb-0 h5">🐉 Rescatando a la Princesa</span>
+    </div>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <span class="badge bg-secondary">Ejercicio · Dijkstra · O((c+s)·log c)</span>
+      <span class="badge bg-warning text-dark" v-if="currentStep" title="Fase del algoritmo">Fase {{ currentStep.phase }}</span>
+      <span class="badge" :class="currentStep.result.kind === 'path' ? 'bg-success' : 'bg-danger'" v-if="currentStep && currentStep.result"
+        title="Salida del programa">{{ currentStep.result.kind === 'path' ? '✅ ' : '' }}{{ currentStep.result.text }}</span>
+      <div class="btn-group btn-group-sm" v-if="nodes.length">
+        <button class="btn btn-outline-light" @click="restartAnimation" title="Reiniciar animación (mismo grafo)">⏮</button>
+        <button class="btn btn-outline-light" @click="stepBackward" :disabled="currentStepIndex === 0" title="Paso anterior">⏪</button>
+        <button class="btn btn-outline-light" @click="togglePlay" :title="isPlaying ? 'Pausar' : 'Reproducir'">{{ isPlaying ? '⏸️' : '▶️' }}</button>
+        <button class="btn btn-outline-light" @click="stepForward" :disabled="isAtEnd" title="Paso siguiente">⏩</button>
+      </div>
+      <input v-if="nodes.length" type="range" class="form-range" style="width:80px" min="150" max="2000" step="50"
+        v-model.number="speedMs" title="Velocidad de reproducción" />
+      <button class="btn btn-sm" :class="showEditor ? 'btn-light' : 'btn-outline-light'" @click="showEditor = !showEditor" title="Editar la entrada">✏️ Editar entrada</button>
+      <button class="btn btn-sm btn-outline-light" @click="fitToView(true)" title="Ajustar vista" v-if="nodes.length">🎯</button>
+      <button class="btn btn-sm" :class="newConfirm ? 'btn-warning text-dark' : 'btn-outline-light'" @click="handleNewClick" title="Volver al ejemplo de la consigna">
+        {{ newConfirm ? '¿Seguro?' : '🆕 Nuevo' }}
+      </button>
+      <button class="btn btn-sm btn-outline-light" @click="shareCurrentState" title="Copiar un link para compartir esta entrada">
+        {{ shareCopied ? '✅ Copiado' : '🔗 Compartir' }}
+      </button>
+      <button class="btn btn-sm btn-outline-light" @click="toggleTheme" :title="isDark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'">{{ isDark ? '☀️' : '🌙' }}</button>
+    </div>
+  </nav>
+
+  <div class="main-row">
+    <div class="left-col">
+      <div class="top-row">
+        <div class="canvas-wrap" ref="containerEl">
+          <canvas
+            ref="canvasEl"
+            @mousedown="onCanvasMouseDown"
+            @mousemove="onCanvasMouseMove"
+            @mouseup="onCanvasMouseUp"
+            @mouseleave="onCanvasMouseUp"
+            @wheel.prevent="onCanvasWheel"
+          ></canvas>
+
+          <div class="card shadow-sm editor-panel" v-if="showEditor">
+            <div class="card-body p-2">
+              <label class="form-label small text-muted mb-1">
+                Entrada como en la consigna: <code>c s d</code>; <code>cf cm</code> (princesa y príncipe); los <code>d</code> claros con dragón; y <code>s</code> senderos <code>ci cf l</code>. Hasta {{ MAX_N }} claros y {{ MAX_EDGES }} senderos.
+              </label>
+              <textarea class="form-control form-control-sm mb-2" rows="10" v-model="inputDraft" style="font-family: monospace"></textarea>
+              <div class="alert alert-danger small py-1 px-2 mb-2" v-if="inputError">{{ inputError }}</div>
+              <button class="btn btn-dark btn-sm w-100" @click="applyInput">▶ Aplicar</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="data-panel" v-if="nodes.length && currentStep">
+          <div class="card">
+            <div class="card-header py-1 px-2 small fw-semibold">🧮 Tiempos por claro</div>
+            <div class="card-body p-2">
+              <table class="table table-sm table-bordered text-center mb-1 mini-table small" style="width: auto;">
+                <thead>
+                  <tr>
+                    <th class="dp-header-cell">v</th>
+                    <th class="dp-header-cell" title="Instante más temprano en que algún dragón puede estar en v">🐉 dragón[v]</th>
+                    <th class="dp-header-cell" v-if="currentStep.tp" title="Mejor tiempo del príncipe hasta v por un camino seguro">🤴 tiempo[v]</th>
+                    <th class="dp-header-cell" v-if="currentStep.tp">padre[v]</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="l in sortedLabels" :key="l" :class="{ 'row-open': currentStep.cur === l }">
+                    <th class="dp-header-cell">{{ l }}</th>
+                    <td :class="ddCellClass(l)">{{ fmtT(currentStep.dd[l]) }}</td>
+                    <td v-if="currentStep.tp" :class="tpCellClass(l)">{{ fmtT(currentStep.tp[l]) }}</td>
+                    <td v-if="currentStep.tp">{{ currentStep.padre[l] ?? '—' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="small text-muted">Verde: valor ya definitivo (extraído de la cola). Azul: recién actualizado.</div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header py-1 px-2 small fw-semibold">📥 Cola de prioridad</div>
+            <div class="card-body p-2">
+              <table class="table table-sm table-bordered text-center mb-0 mini-table small" style="width: auto;">
+                <thead>
+                  <tr><th class="dp-header-cell">tiempo</th><th class="dp-header-cell">claro</th><th class="dp-header-cell"></th></tr>
+                </thead>
+                <tbody>
+                  <tr v-if="!currentStep.pq.length"><td colspan="3" class="text-muted">(vacía)</td></tr>
+                  <tr v-for="(e, idx) in currentStep.pq" :key="idx" :class="{ 'pq-stale': e.stale }"
+                    :title="e.stale ? 'Entrada vieja: ya se encontró un tiempo menor para este claro' : ''">
+                    <td>{{ e.t }}</td>
+                    <td>{{ e.u }}</td>
+                    <td><span class="badge bg-primary" v-if="idx === 0">mín</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="trace-wrap" v-if="nodes.length && currentStep">
+        <div class="card">
+          <div class="card-header py-1 px-2 small fw-semibold">📋 Seguimiento por extracción de la cola</div>
+          <div class="card-body p-2" style="overflow-x: auto;">
+            <table class="table table-sm table-bordered text-center align-middle mb-0 small">
+              <thead>
+                <tr>
+                  <th class="dp-header-cell" title="Fase 1: dragones. Fase 2: príncipe">Fase</th>
+                  <th class="dp-header-cell" title="Claro extraído de la cola">u</th>
+                  <th class="dp-header-cell" title="Tiempo con el que salió de la cola">t</th>
+                  <th class="dp-header-cell" title="Cada vecino v de u con el resultado de t + largo del sendero">Vecinos de u</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, idx) in currentStep.rows" :key="idx" :class="{ 'row-open': isOpenRow(idx) }">
+                  <td>{{ row.phase === 1 ? '1 · 🐉' : '2 · 🤴' }}</td>
+                  <td :class="{ 'pq-stale': row.stale, 'fw-semibold': !row.stale }">{{ row.u }}</td>
+                  <td :class="{ 'pq-stale': row.stale }">{{ row.t }}</td>
+                  <td class="text-start">
+                    <span v-if="row.stale" class="text-muted">entrada vieja, se ignora</span>
+                    <span v-for="x in row.nb" :key="x.v" class="badge me-1" :class="NB_CLASS[x.status]" :title="NB_TITLE[x.status]">{{ x.v }}: {{ x.text }}</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="code-panel">
+      <ul class="nav nav-tabs px-3 pt-2">
+        <li class="nav-item"><button class="nav-link" :class="{ active: tab === 'pasos' }" @click="tab = 'pasos'">▶ Paso a paso</button></li>
+        <li class="nav-item"><button class="nav-link" :class="{ active: tab === 'teoria' }" @click="tab = 'teoria'">📖 Resolución</button></li>
+      </ul>
+
+      <div class="p-3" v-if="tab === 'pasos'">
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">💻 Pseudocódigo</div>
+          <div class="card-body p-0">
+            <div class="pseudo-code">
+              <div v-for="(line, idx) in PSEUDOCODE" :key="idx" class="pseudo-line"
+                :class="{ 'pseudo-active': currentStep && currentStep.activeLines.includes(idx) }">{{ line }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">🔍 Explicación</div>
+          <div class="card-body">
+            <p class="text-muted text-center py-3 mb-0" v-if="!currentStep">Cargá una entrada y presioná ▶️ o "Paso siguiente" para empezar.</p>
+            <div v-else>
+              <span class="badge fs-6 text-wrap text-start" :class="currentStep.badge.cls">{{ currentStep.badge.icon }} {{ currentStep.badge.text }}</span>
+            </div>
+            <p class="small text-muted mt-3 mb-0" v-if="currentStep">Paso {{ currentStepIndex + 1 }} de {{ steps.length }}</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header fw-semibold">Leyenda</div>
+          <ul class="list-group list-group-flush small">
+            <li class="list-group-item">🐉 claro con dragón · 🤴 príncipe · 👸 princesa</li>
+            <li class="list-group-item"><b class="text-warning-emphasis">d=</b> dragón[v]: cuándo llega el primer dragón · <b class="text-primary">t=</b> tiempo[v]: cuándo llega el príncipe</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-warning text-dark">&nbsp;&nbsp;</span> Línea naranja: camino más corto de los dragones (fase 1)</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-success">&nbsp;&nbsp;</span> Línea verde: camino del príncipe (fase 2); gruesa = camino seguro final</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-info text-dark">&nbsp;&nbsp;</span> Sendero que se está examinando</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-danger">&nbsp;&nbsp;</span> Sendero bloqueado: un dragón llega antes o a la vez</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="p-3 theory" v-else>
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">📖 Enunciado, en breve</div>
+          <div class="card-body">
+            <p>Un bosque con <b>c</b> claros unidos por <b>s</b> senderos bidireccionales con largo. Hay <b>d</b> dragones, cada uno en un claro. El príncipe y los dragones se mueven a la misma velocidad, y un dragón puede quedarse quieto esperando. Hay que llevar al príncipe hasta la princesa por el camino <b>más corto que sea seguro</b>: que nunca se cruce con un dragón <b>en un claro</b> (en un sendero no cuenta).</p>
+            <p class="mb-1">La salida es una de tres: <code>NO HAY CAMINO</code> (príncipe y princesa no están conectados), <code>INTERCEPTADO</code> (hay camino, pero ninguno es seguro) o la lista de claros del camino seguro más corto.</p>
+            <p class="mb-0 small text-muted">En el ejemplo (dragones en 8 y 5) el camino más corto sin mirar dragones es <code>1 2 6 9</code> (largo 7), pero el dragón del 8 llega al claro 6 en t = 3 y el príncipe en t = 4. Todos los caminos terminan interceptados: la respuesta es <code>INTERCEPTADO</code>. El PDF original del certamen muestra otra salida para esta misma entrada; acá se sigue la condición de la consigna.</p>
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">1 · Cuándo un dragón intercepta al príncipe</div>
+          <div class="card-body">
+            <ul>
+              <li><b>Tiempo del príncipe:</b> <code>T(v)</code> = largo del tramo del camino elegido hasta el claro <code>v</code> (todos van a velocidad 1, así que largo = tiempo).</li>
+              <li><b>Tiempo del dragón:</b> <code>D(v)</code> = el mínimo, entre todos los dragones, de la distancia más corta del dragón al claro <code>v</code>. Es el instante más temprano en que algún dragón puede estar en <code>v</code>.</li>
+              <li><b>Condición:</b> como un dragón puede esperar, si llega a <code>v</code> en un instante <code>D(v) ≤ T(v)</code> ya lo está esperando cuando llega el príncipe. <b>Hay intercepción en <code>v</code> si y solo si <code>D(v) ≤ T(v)</code></b>. El empate cuenta: si llegan a la vez, se cruzan en el claro.</li>
+              <li><b>Camino seguro:</b> <code>T(v) &lt; D(v)</code> en <b>todos</b> los claros del camino, incluida la princesa. En el claro inicial se cumple siempre: no hay dragón ahí, así que <code>D &gt; 0 = T</code>.</li>
+              <li><b>Por qué no alcanza comparar distancias sueltas:</b>
+                <ul>
+                  <li>Un dragón lejano igual intercepta: llega antes y espera. No importa quién está más cerca del príncipe, importa quién llega antes a cada claro del camino.</li>
+                  <li>Hay que mirar todos los claros del camino, no solo la princesa.</li>
+                  <li>Basta el mínimo entre los dragones: <code>D(v)</code> ya resume a todos.</li>
+                  <li>Hay que usar el <code>T(v)</code> del camino elegido, no el de la distancia mínima del príncipe a <code>v</code>: un rodeo llega más tarde.</li>
+                </ul>
+              </li>
+              <li><b>Consecuencia para el algoritmo:</b> llegar antes a un claro nunca perjudica (la condición <code>T(v) &lt; D(v)</code> es más fácil de cumplir cuanto menor es <code>T</code>). Por eso alcanza con un Dijkstra del príncipe que <b>no entra</b> a ningún claro donde <code>t + l ≥ D(v)</code>: el camino más corto que queda es el más corto de los seguros.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">2 · Pseudocódigo</div>
+          <div class="card-body p-0">
+            <div class="pseudo-code">
+              <div v-for="(line, idx) in PSEUDOCODE" :key="idx" class="pseudo-line">{{ line }}</div>
+            </div>
+          </div>
+          <div class="card-footer small text-muted">
+            La cola de prioridad es un heap con inserciones repetidas por claro: al extraer, una entrada vieja (<code>t &gt; tiempo[u]</code>) se ignora. Los senderos se guardan en una lista de adyacencia.
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header fw-semibold">3 · Complejidad</div>
+          <div class="card-body">
+            <p class="mb-1">Con <code>V = c</code> claros y <code>E = s</code> senderos:</p>
+            <ul>
+              <li><b>Armar la lista de adyacencia:</b> Θ(c + s).</li>
+              <li><b>Fase 1 (dragones):</b> una sola búsqueda con los <code>d</code> dragones como orígenes simultáneos, no una por dragón. Cada sendero se mira dos veces (una por extremo) y cada vez inserta a lo sumo una entrada en el heap, que llega a tener O(s) entradas, así que cuesta O(log s) = O(log c) (porque s ≤ c²). Total: O((c + s)·log c).</li>
+              <li><b>Fase 2 (príncipe):</b> el mismo Dijkstra con una condición más en el <code>SI</code>: O((c + s)·log c).</li>
+              <li><b>Fase 3:</b> reconstruir el camino por <code>padre[]</code> es O(c); la comprobación de alcanzabilidad (BFS ignorando dragones) solo corre si no hubo camino seguro y es O(c + s).</li>
+            </ul>
+            <p class="mb-1"><b>Total:</b> <code>O((c + s)·log c)</code>. Espacio: O(c + s).</p>
+            <p class="mb-1">Con los límites (<code>c ≤ 100 000</code>, <code>s ≤ 600 000</code>):</p>
+            <ul class="mb-0">
+              <li>Esta solución: (10⁵ + 6·10⁵)·log₂ 10⁵ ≈ 7·10⁵ · 17 ≈ 1,2·10⁷ por fase, unos 2,4·10⁷ en total. Instantáneo.</li>
+              <li>Un Dijkstra por dragón: d · 1,2·10⁷ ≈ 10⁹. Es cien veces peor, y se evita con la fuente múltiple.</li>
+              <li>Matriz de adyacencia (o Dijkstra con búsqueda lineal del mínimo): c² = 10¹⁰ de tiempo y de memoria. Inviable; por eso lista de adyacencia más heap.</li>
+              <li>Con un heap de Fibonacci bajaría a O(s + c·log c), pero a esta escala no se nota.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-bar text-center small border-top">
+    <p> Hecho con ❤️ por <a href="https://github.com/programacion-avanzada">Programación Avanzada</a> (y <a href="https://claude.ai">Claude</a>)</p>
+  </div>
+
+</div>
+
+<script>
+const { createApp, ref, reactive, computed, onMounted, onBeforeUnmount, nextTick } = Vue;
+
+const PSEUDOCODE = [
+  'ALGORITMO Rescate(G, príncipe, princesa, dragones)',
+  '    // Fase 1: instante en que el primer dragón puede estar en cada claro',
+  '    dragón[v] ← ∞ para todo claro v',
+  '    cola ← cola de prioridad vacía',
+  '    PARA CADA d EN dragones HACER',
+  '        dragón[d] ← 0',
+  '        cola.insertar((0, d))',
+  '    MIENTRAS !cola.vacia() HACER',
+  '        (t, u) ← cola.extraerMinimo()',
+  '        SI t > dragón[u] ENTONCES CONTINUAR',
+  '        PARA CADA (v, l) EN G.adyacentes(u) HACER',
+  '            SI t + l < dragón[v] ENTONCES',
+  '                dragón[v] ← t + l',
+  '                cola.insertar((t + l, v))',
+  '',
+  '    // Fase 2: Dijkstra del príncipe, sin pisar un claro donde un dragón llega antes o a la vez',
+  '    tiempo[v] ← ∞ y padre[v] ← NULO para todo claro v',
+  '    tiempo[príncipe] ← 0',
+  '    cola.insertar((0, príncipe))',
+  '    MIENTRAS !cola.vacia() HACER',
+  '        (t, u) ← cola.extraerMinimo()',
+  '        SI t > tiempo[u] ENTONCES CONTINUAR',
+  '        SI u = princesa ENTONCES TERMINAR EL CICLO',
+  '        PARA CADA (v, l) EN G.adyacentes(u) HACER',
+  '            SI t + l < tiempo[v] Y t + l < dragón[v] ENTONCES',
+  '                tiempo[v] ← t + l',
+  '                padre[v] ← u',
+  '                cola.insertar((t + l, v))',
+  '',
+  '    // Fase 3: respuesta',
+  '    SI tiempo[princesa] < ∞ ENTONCES',
+  '        RETORNAR camino(padre, príncipe, princesa)',
+  '    SI alcanzable(G, príncipe, princesa) ENTONCES    // BFS ignorando dragones',
+  '        RETORNAR "INTERCEPTADO"',
+  '    RETORNAR "NO HAY CAMINO"',
+];
+
+// Ejemplo de la consigna: 9 claros, 10 senderos, 2 dragones (8 y 5), princesa en 9 y príncipe en 1 → INTERCEPTADO.
+const DEFAULT_INPUT = '9 10 2\n9 1\n8 5\n1 2 3\n1 3 2\n2 3 4\n2 6 1\n3 8 1\n8 6 5\n4 5 2\n3 4 2\n3 6 2\n6 9 3';
+const DEFAULT_POSITIONS = {
+  '1': { x: -240, y: 0 }, '2': { x: -120, y: -110 }, '3': { x: -120, y: 90 },
+  '4': { x: -120, y: 220 }, '5': { x: 20, y: 260 }, '6': { x: 60, y: -20 },
+  '8': { x: 60, y: 150 }, '9': { x: 220, y: -20 },
+};
+
+// Tope para que el dibujo siga siendo legible (la consigna admite hasta c = 100.000).
+const MAX_N = 30, MAX_EDGES = 60;
+
+const NB_CLASS = { upd: 'bg-success', noimp: 'bg-secondary', blocked: 'bg-danger' };
+const NB_TITLE = { upd: 'Mejora: se actualiza y se encola', noimp: 'No mejora el valor que ya tenía', blocked: 'Bloqueado: un dragón llega antes o a la vez' };
+
+function edgeKey(a, b) { return [a, b].sort().join('|'); }
+// Orden de los nodos en las tablas: numérico si todas las etiquetas son números,
+// si no lexicográfico ("10" antes que "2", "A10" antes que "A2").
+function sortLabels(labels) {
+  const allNumeric = labels.every(l => l.trim() !== '' && !isNaN(l));
+  return [...labels].sort(allNumeric
+    ? (a, b) => Number(a) - Number(b)
+    : (a, b) => a.localeCompare(b, 'es'));
+}
+function plural(n, word) { return `${n} ${word}${n === 1 ? '' : 's'}`; }
+function fmtT(x) { return x === Infinity ? '∞' : String(x); }
+
+// ── Parseo de la entrada con el formato de la consigna:
+//   c s d / cf cm / d claros con dragón / s líneas "ci cf l".
+// Los claros son 1..c. Si hay varios senderos entre el mismo par de claros, `off` los separa al dibujarlos.
+function parseInput(text) {
+  const nums = text.split(/\s+/).filter(Boolean).map(Number);
+  if (nums.some(x => !Number.isInteger(x))) return { error: 'Solo se admiten números enteros separados por espacios o saltos de línea.' };
+  if (nums.length < 5) return { error: 'Faltan los primeros números: c, s, d, y el claro de la princesa y el del príncipe.' };
+  const [c, s, d, cf, cm] = nums;
+  if (c < 2 || c > MAX_N) return { error: `c debe estar entre 2 y ${MAX_N} (para poder dibujarlo).` };
+  if (s < 0 || s > MAX_EDGES) return { error: `s debe estar entre 0 y ${MAX_EDGES} (para poder dibujarlo).` };
+  if (d < 0 || d > Math.min(100, c)) return { error: `d debe estar entre 0 y ${Math.min(100, c)}.` };
+  const expected = 5 + d + 3 * s;
+  if (nums.length !== expected) return { error: `Con d = ${d} y s = ${s} se esperan ${expected} números en total y hay ${nums.length}.` };
+  if (cf < 1 || cf > c || cm < 1 || cm > c) return { error: `La princesa y el príncipe deben estar en claros de 1 a ${c}.` };
+
+  const dragones = [];
+  for (let i = 0; i < d; i++) {
+    const x = nums[5 + i];
+    if (x < 1 || x > c) return { error: `El dragón ${i + 1} está en un claro fuera de 1..${c}.` };
+    if (x === cm || x === cf) return { error: `Hay un dragón en el claro ${x}, donde está el príncipe o la princesa: la consigna lo prohíbe.` };
+    if (!dragones.includes(String(x))) dragones.push(String(x));
+  }
+
+  const edges = [];
+  for (let i = 0; i < s; i++) {
+    const base = 5 + d + 3 * i;
+    const a = nums[base], b = nums[base + 1], l = nums[base + 2];
+    if (a < 1 || a > c || b < 1 || b > c) return { error: `El sendero ${i + 1} usa un claro fuera de 1..${c}.` };
+    if (l < 1 || l > 1000) return { error: `El largo del sendero ${i + 1} debe estar entre 1 y 1000.` };
+    edges.push({ a: String(a), b: String(b), w: l, key: `e${i}`, off: 0 });
+  }
+  const groups = new Map();
+  for (const e of edges) {
+    const k = edgeKey(e.a, e.b);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e);
+  }
+  for (const g of groups.values()) g.forEach((e, i) => { e.off = i - (g.length - 1) / 2; });
+
+  return {
+    nodeLabels: Array.from({ length: c }, (_, i) => String(i + 1)),
+    edges,
+    problem: { princesa: String(cf), principe: String(cm), dragones },
+  };
+}
+
+// ── Corre el algoritmo una sola vez y empuja un snapshot por cada punto de parada didáctico.
+// Fase 1: Dijkstra con todos los dragones como origen → dragón[v]. Fase 2: Dijkstra del príncipe, sin entrar
+// a un claro donde un dragón llega antes o a la vez. Fase 3: arma la respuesta.
+function computeSteps(nodeLabels, edges, { principe, princesa, dragones }) {
+  const steps = [];
+  if (!nodeLabels.length) return steps;
+
+  // Lista de adyacencia en el orden en que se declararon los senderos.
+  const adj = {};
+  for (const l of nodeLabels) adj[l] = [];
+  for (const e of edges) {
+    adj[e.a].push({ v: e.b, l: e.w, key: e.key });
+    if (e.a !== e.b) adj[e.b].push({ v: e.a, l: e.w, key: e.key });
+  }
+
+  const dd = {}, tp = {}, padre = {};
+  const predKeyD = {}, predKeyP = {};
+  for (const l of nodeLabels) { dd[l] = Infinity; tp[l] = Infinity; padre[l] = null; }
+
+  let phase = 1, showTp = false;
+  let pq = [], seq = 0;
+  function insert(t, u) {
+    pq.push({ t, u, seq: seq++ });
+    pq.sort((x, y) => x.t - y.t || x.seq - y.seq);
+  }
+  let cur = null, changed = null, compare = null, done = [];
+  let highlightEdge = null, highlightKind = 'ok', endpoints = [], openRow = false;
+  let result = null, pathNodes = [];
+  const pathKeys = new Set();
+  const rows = [];
+
+  function snapshot(activeLines, badge) {
+    const edgeClass = {};
+    if (phase === 1) for (const v of nodeLabels) if (predKeyD[v]) edgeClass[predKeyD[v]] = 'dragon';
+    if (phase >= 2) for (const v of nodeLabels) if (predKeyP[v]) edgeClass[predKeyP[v]] = 'prince';
+    for (const k of pathKeys) edgeClass[k] = 'path';
+    const best = phase === 1 ? dd : tp;
+    steps.push({
+      activeLines, phase,
+      pq: pq.map(e => ({ t: e.t, u: e.u, stale: e.t > best[e.u] })),
+      dd: { ...dd },
+      tp: showTp ? { ...tp } : null,
+      padre: showTp ? { ...padre } : null,
+      cur, changed: changed && { ...changed }, compare, done: [...done],
+      highlightEdge, highlightKind, endpoints: [...endpoints],
+      edgeClass,
+      rows: rows.map(r => ({ ...r, nb: [...r.nb] })),
+      openRow,
+      badge, result, pathNodes: [...pathNodes],
+    });
+  }
+
+  // Saca el mínimo de la cola y abre su fila en la tabla de seguimiento. Devuelve null si la entrada es vieja.
+  function popMin(best, lines) {
+    const { t, u } = pq.shift();
+    cur = u; endpoints = [u];
+    rows.push({ phase, u, t, nb: [], stale: false });
+    openRow = true;
+    if (t > best[u]) {
+      rows[rows.length - 1].stale = true;
+      snapshot(lines.stale, { icon: '🗑️', text: `Se extrae (${t}, ${u}), pero ya se encontró un tiempo menor para ${u} (${fmtT(best[u])}): es una entrada vieja y se ignora.`, cls: 'bg-secondary' });
+      cur = null; endpoints = []; openRow = false;
+      return null;
+    }
+    done.push(u);
+    return { t, u };
+  }
+  function endRow() { cur = null; endpoints = []; highlightEdge = null; compare = null; openRow = false; }
+
+  // ── Fase 1: dragones ──
+  snapshot([2, 3], { icon: '🏗️', text: 'Fase 1: dragón[v] = ∞ en todos los claros (todavía no se sabe cuándo llega ningún dragón); la cola arranca vacía.', cls: 'bg-secondary' });
+  for (const d of dragones) { dd[d] = 0; insert(0, d); }
+  snapshot([4, 5, 6], {
+    icon: '🐉',
+    text: dragones.length
+      ? `Los dragones (${dragones.join(', ')}) están en su claro desde el instante 0: dragón[d] = 0 y todos entran a la cola. Se hace UNA sola búsqueda con todos juntos, no una por dragón.`
+      : 'No hay dragones: dragón[v] = ∞ en todos los claros y la cola queda vacía.',
+    cls: 'bg-warning text-dark',
+  });
+  while (pq.length) {
+    const top = popMin(dd, { stale: [8, 9] });
+    if (!top) continue;
+    const { t, u } = top;
+    snapshot([8], { icon: '📤', text: `Se extrae (${t}, ${u}): el primer dragón puede estar en el claro ${u} en t = ${t}. Ese valor ya es definitivo.`, cls: 'bg-warning text-dark' });
+    for (const { v, l, key } of adj[u]) {
+      const nt = t + l;
+      highlightEdge = key; highlightKind = 'ok'; endpoints = [u, v]; compare = v;
+      if (nt < dd[v]) {
+        const old = dd[v];
+        dd[v] = nt; predKeyD[v] = key; insert(nt, v);
+        changed = { v, col: 'dd' };
+        rows[rows.length - 1].nb.push({ v, status: 'upd', text: String(nt) });
+        snapshot([10, 11, 12, 13], { icon: '🔄', text: `Sendero ${u}–${v} (largo ${l}): ${t} + ${l} = ${nt} < dragón[${v}] = ${fmtT(old)}. Se actualiza dragón[${v}] = ${nt} y se encola.`, cls: 'bg-primary' });
+        changed = null;
+      } else {
+        rows[rows.length - 1].nb.push({ v, status: 'noimp', text: `${nt} ≥ ${dd[v]}` });
+        snapshot([10, 11], { icon: '➖', text: `Sendero ${u}–${v} (largo ${l}): ${t} + ${l} = ${nt} ≥ dragón[${v}] = ${dd[v]}. No mejora.`, cls: 'bg-secondary' });
+      }
+    }
+    endRow();
+  }
+  snapshot([7], { icon: '🏁', text: 'La cola quedó vacía. dragón[v] es el instante más temprano en que algún dragón puede estar en v (∞ si ninguno llega).', cls: 'bg-success' });
+
+  // ── Fase 2: el príncipe ──
+  phase = 2; showTp = true; done = [];
+  tp[principe] = 0; insert(0, principe);
+  snapshot([16, 17, 18], { icon: '🤴', text: `Fase 2: el príncipe sale de ${principe}: tiempo[${principe}] = 0 (y dragón[${principe}] = ${fmtT(dd[principe])} > 0, así que el claro inicial es seguro). Los demás claros arrancan en ∞.`, cls: 'bg-warning text-dark' });
+
+  let reached = false;
+  while (pq.length) {
+    const top = popMin(tp, { stale: [20, 21] });
+    if (!top) continue;
+    const { t, u } = top;
+    if (u === princesa) {
+      snapshot([20, 22], { icon: '👸', text: `Se extrae (${t}, ${u}): es el claro de la princesa. tiempo[${u}] = ${t} es el camino seguro más corto, no hace falta seguir.`, cls: 'bg-success' });
+      endRow(); openRow = true; reached = true;
+      break;
+    }
+    snapshot([20], { icon: '📤', text: `Se extrae (${t}, ${u}): el príncipe puede estar en ${u} en t = ${t} por un camino seguro. Ese valor ya es definitivo.`, cls: 'bg-warning text-dark' });
+    for (const { v, l, key } of adj[u]) {
+      const nt = t + l;
+      highlightEdge = key; highlightKind = 'ok'; endpoints = [u, v]; compare = v;
+      if (nt >= tp[v]) {
+        rows[rows.length - 1].nb.push({ v, status: 'noimp', text: `${nt} ≥ ${fmtT(tp[v])}` });
+        snapshot([23, 24], { icon: '➖', text: `Sendero ${u}–${v} (largo ${l}): ${t} + ${l} = ${nt} ≥ tiempo[${v}] = ${fmtT(tp[v])}. Ya se llegaba antes, no mejora.`, cls: 'bg-secondary' });
+      } else if (nt >= dd[v]) {
+        highlightKind = 'blocked';
+        rows[rows.length - 1].nb.push({ v, status: 'blocked', text: `🐉 ${nt} ≥ ${dd[v]}` });
+        snapshot([23, 24], { icon: '🚫', text: `Sendero ${u}–${v} (largo ${l}): el príncipe llegaría a ${v} en t = ${nt}, pero dragón[${v}] = ${dd[v]} ≤ ${nt}: un dragón llega antes o a la vez y lo espera. No se entra a ${v}.`, cls: 'bg-danger' });
+      } else {
+        const old = tp[v];
+        tp[v] = nt; padre[v] = u; predKeyP[v] = key; insert(nt, v);
+        changed = { v, col: 'tp' };
+        rows[rows.length - 1].nb.push({ v, status: 'upd', text: String(nt) });
+        snapshot([23, 24, 25, 26, 27], { icon: '🔄', text: `Sendero ${u}–${v} (largo ${l}): ${t} + ${l} = ${nt} < tiempo[${v}] = ${fmtT(old)} y ${nt} < dragón[${v}] = ${fmtT(dd[v])}: es seguro. tiempo[${v}] = ${nt}, padre[${v}] = ${u}, se encola.`, cls: 'bg-primary' });
+        changed = null;
+      }
+    }
+    endRow();
+  }
+  if (!reached) {
+    snapshot([19], { icon: '🛑', text: `La cola quedó vacía y la princesa (${princesa}) nunca salió de ella: por caminos seguros no se llega.`, cls: 'bg-danger' });
+  }
+
+  // ── Fase 3: respuesta ──
+  phase = 3; endRow();
+  if (reached) {
+    for (let v = princesa; v !== null; v = padre[v]) {
+      pathNodes.unshift(v);
+      if (predKeyP[v]) pathKeys.add(predKeyP[v]);
+    }
+    result = { kind: 'path', text: pathNodes.join(' ') };
+    snapshot([30, 31], { icon: '🏁', text: `tiempo[${princesa}] = ${tp[princesa]} < ∞: hay camino seguro. Se reconstruye siguiendo padre[] desde la princesa hasta el príncipe: ${pathNodes.join(' → ')} (largo ${tp[princesa]}).`, cls: 'bg-success' });
+    return steps;
+  }
+  snapshot([30], { icon: '❓', text: `tiempo[${princesa}] = ∞: por un camino seguro no se llega. Falta saber si es porque no hay ningún camino o porque todos están interceptados.`, cls: 'bg-warning text-dark' });
+  const seen = new Set([principe]);
+  const stack = [principe];
+  while (stack.length) {
+    const u = stack.pop();
+    for (const { v } of adj[u]) if (!seen.has(v)) { seen.add(v); stack.push(v); }
+  }
+  if (seen.has(princesa)) {
+    result = { kind: 'intercepted', text: 'INTERCEPTADO' };
+    snapshot([32, 33], { icon: '🐉', text: `Ignorando a los dragones, de ${principe} se llega a ${princesa} (se alcanzan ${plural(seen.size, 'claro')}): sí hay camino, pero todos pasan por un claro donde un dragón llega antes o a la vez. Salida: INTERCEPTADO.`, cls: 'bg-danger' });
+  } else {
+    result = { kind: 'none', text: 'NO HAY CAMINO' };
+    snapshot([32, 34], { icon: '🚧', text: `Ignorando a los dragones, de ${principe} solo se alcanzan ${plural(seen.size, 'claro')} y ${princesa} no es uno de ellos: no existe ningún camino. Salida: NO HAY CAMINO.`, cls: 'bg-danger' });
+  }
+  return steps;
+}
+
+// ── Layout inicial circular: los nodos que ya tenían posición la conservan,
+// los nuevos se ubican en círculo según su índice en la lista total de nodos.
+function layoutNodes(nodeLabels, existingPositions) {
+  const R = 160;
+  const positions = {};
+  nodeLabels.forEach((label, i) => {
+    if (existingPositions[label]) { positions[label] = existingPositions[label]; return; }
+    const angle = (i / nodeLabels.length) * Math.PI * 2 - Math.PI / 2;
+    positions[label] = { x: Math.cos(angle) * R, y: Math.sin(angle) * R };
+  });
+  return positions;
+}
+
+createApp({
+  setup() {
+    const STORAGE_KEY = 'pa-tools-ejercicios-rescatando-a-la-princesa';
+    const NODE_R = 22;
+    const PADDING = 60;
+    const PARALLEL_GAP = 36;
+
+    const nodes = ref([]);
+    const edges = ref([]);
+    const problem = ref({ principe: '', princesa: '', dragones: [] });
+    const tab = ref('pasos');
+
+    const steps = ref([]);
+    const currentStepIndex = ref(0);
+    const isPlaying = ref(false);
+    const speedMs = ref(700);
+    let playTimer = null;
+
+    const showEditor = ref(false);
+    const inputDraft = ref(DEFAULT_INPUT);
+    const inputError = ref('');
+
+    const camera = reactive({ offsetX: 0, offsetY: 0, scale: 1 });
+    const userAdjustedCamera = ref(false);
+    const isDark = ref(document.documentElement.getAttribute('data-bs-theme') === 'dark');
+
+    const canvasEl = ref(null);
+    const containerEl = ref(null);
+
+    const currentStep = computed(() => steps.value[currentStepIndex.value] || null);
+    const isAtEnd = computed(() => currentStepIndex.value >= steps.value.length - 1);
+    const sortedLabels = computed(() => sortLabels(nodes.value.map(n => n.label)));
+
+    function isOpenRow(idx) {
+      const s = currentStep.value;
+      return s.openRow && idx === s.rows.length - 1;
+    }
+    // Columna dragón[v]: verde si ya es definitivo (fase 1), azul si recién cambió, celeste si se está comparando.
+    function ddCellClass(label) {
+      const s = currentStep.value;
+      return {
+        'cell-changed': !!s.changed && s.changed.v === label && s.changed.col === 'dd',
+        'cell-final': s.phase === 1 && s.done.includes(label),
+        'cell-target': s.phase >= 2 && s.compare === label,
+      };
+    }
+    function tpCellClass(label) {
+      const s = currentStep.value;
+      return {
+        'cell-changed': !!s.changed && s.changed.v === label && s.changed.col === 'tp',
+        'cell-final': s.phase >= 2 && s.done.includes(label),
+      };
+    }
+
+    // ── Persistencia ──
+    function positionsMap() {
+      const m = {};
+      for (const n of nodes.value) m[n.label] = { x: n.x, y: n.y };
+      return m;
+    }
+    function currentState() {
+      return { input: inputDraft.value, positions: positionsMap() };
+    }
+    function applyState(data) {
+      const text = data.input ?? inputDraft.value;
+      const parsed = parseInput(text);
+      if (parsed.error) throw new Error(parsed.error);
+      inputDraft.value = text;
+      const posMap = layoutNodes(parsed.nodeLabels, data.positions || {});
+      nodes.value = parsed.nodeLabels.map(label => ({ label, x: posMap[label].x, y: posMap[label].y }));
+      edges.value = parsed.edges;
+      problem.value = parsed.problem;
+      regenerateSteps();
+    }
+    function persist() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(currentState()));
+    }
+    function loadFromStorage() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) { resetToDefault(); return; }
+        applyState(JSON.parse(raw));
+      } catch (e) { resetToDefault(); }
+    }
+
+    // ── Compartir por URL (#d=...) ──
+    function encodeState(data) { return encodeURIComponent(JSON.stringify(data)); }
+    function decodeState(str) { return JSON.parse(decodeURIComponent(str)); }
+
+    function loadInitialState() {
+      if (location.hash.startsWith('#d=')) {
+        try {
+          applyState(decodeState(location.hash.slice(3)));
+          history.replaceState(null, '', location.pathname + location.search);
+          persist();
+          return;
+        } catch (e) { console.error('No se pudo leer la entrada de la URL:', e); }
+      }
+      loadFromStorage();
+    }
+
+    const shareCopied = ref(false);
+    function shareCurrentState() {
+      const url = `${location.origin}${location.pathname}#d=${encodeState(currentState())}`;
+      const onCopied = () => { shareCopied.value = true; setTimeout(() => { shareCopied.value = false; }, 2000); };
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(url).then(onCopied).catch(() => window.prompt('Copiá el link:', url));
+      } else {
+        window.prompt('Copiá el link:', url);
+      }
+    }
+
+    // ── "Nuevo" (2 pasos) ──
+    const newConfirm = ref(false);
+    function handleNewClick() {
+      if (newConfirm.value) { resetToDefault(); return; }
+      newConfirm.value = true;
+      setTimeout(() => { newConfirm.value = false; }, 3000);
+    }
+    function resetToDefault() {
+      newConfirm.value = false;
+      inputError.value = '';
+      applyState({ input: DEFAULT_INPUT, positions: DEFAULT_POSITIONS });
+      persist();
+      userAdjustedCamera.value = false;
+      nextTick(() => { resizeCanvasToDisplaySize(); fitToView(); });
+    }
+
+    // ── Editar la entrada ──
+    function applyInput() {
+      const { error } = parseInput(inputDraft.value);
+      inputError.value = error || '';
+      if (error) return;
+      applyState({ input: inputDraft.value, positions: positionsMap() });
+      persist();
+      userAdjustedCamera.value = false;
+      nextTick(() => { resizeCanvasToDisplaySize(); fitToView(); });
+    }
+
+    // ── Reproducción ──
+    function regenerateSteps() {
+      steps.value = computeSteps(nodes.value.map(n => n.label), edges.value, problem.value);
+      currentStepIndex.value = 0;
+      stopAutoplay();
+      draw();
+    }
+    function goToStep(i) {
+      currentStepIndex.value = Math.max(0, Math.min(steps.value.length - 1, i));
+      draw();
+    }
+    function stepForward() { if (!isAtEnd.value) goToStep(currentStepIndex.value + 1); else stopAutoplay(); }
+    function stepBackward() { goToStep(currentStepIndex.value - 1); }
+    function restartAnimation() { stopAutoplay(); goToStep(0); }
+    function stopAutoplay() {
+      isPlaying.value = false;
+      if (playTimer) { clearInterval(playTimer); playTimer = null; }
+    }
+    function togglePlay() {
+      if (isPlaying.value) { stopAutoplay(); return; }
+      if (isAtEnd.value) goToStep(0);
+      isPlaying.value = true;
+      playTimer = setInterval(() => {
+        if (isAtEnd.value) { stopAutoplay(); return; }
+        stepForward();
+      }, speedMs.value);
+    }
+
+    // ── Cámara: pan / zoom (igual que recursion/call-tree.html) ──
+    function worldToScreen(x, y) {
+      return { x: x * camera.scale + camera.offsetX, y: y * camera.scale + camera.offsetY };
+    }
+    function screenToWorld(x, y) {
+      return { x: (x - camera.offsetX) / camera.scale, y: (y - camera.offsetY) / camera.scale };
+    }
+    function fitToView(manual) {
+      if (!nodes.value.length || !containerEl.value) return;
+      const xs = nodes.value.map(n => n.x), ys = nodes.value.map(n => n.y);
+      const minX = Math.min(...xs) - NODE_R, maxX = Math.max(...xs) + NODE_R;
+      const minY = Math.min(...ys) - NODE_R, maxY = Math.max(...ys) + NODE_R;
+      const w = containerEl.value.clientWidth, h = containerEl.value.clientHeight;
+      const contentW = Math.max(maxX - minX, 1), contentH = Math.max(maxY - minY, 1);
+      camera.scale = Math.max(0.2, Math.min((w - PADDING * 2) / contentW, (h - PADDING * 2) / contentH, 1.6));
+      camera.offsetX = w / 2 - (minX + maxX) / 2 * camera.scale;
+      camera.offsetY = h / 2 - (minY + maxY) / 2 * camera.scale;
+      if (manual) userAdjustedCamera.value = false;
+      draw();
+    }
+
+    function hitTestNode(sx, sy) {
+      for (let i = nodes.value.length - 1; i >= 0; i--) {
+        const n = nodes.value[i];
+        const p = worldToScreen(n.x, n.y);
+        if (Math.hypot(sx - p.x, sy - p.y) <= NODE_R * camera.scale) return n;
+      }
+      return null;
+    }
+
+    // ── Mouse: arrastrar un nodo si el mousedown empieza sobre él, si no, pan de cámara ──
+    let isPanning = false, panStart = null;
+    let draggingNode = null;
+    function onCanvasMouseDown(e) {
+      const hit = hitTestNode(e.offsetX, e.offsetY);
+      if (hit) { draggingNode = hit; return; }
+      isPanning = true;
+      panStart = { x: e.offsetX, y: e.offsetY, offsetX: camera.offsetX, offsetY: camera.offsetY };
+      canvasEl.value.style.cursor = 'grabbing';
+    }
+    function onCanvasMouseMove(e) {
+      if (draggingNode) {
+        const w = screenToWorld(e.offsetX, e.offsetY);
+        draggingNode.x = w.x;
+        draggingNode.y = w.y;
+        draw();
+        return;
+      }
+      if (!isPanning) return;
+      camera.offsetX = panStart.offsetX + (e.offsetX - panStart.x);
+      camera.offsetY = panStart.offsetY + (e.offsetY - panStart.y);
+      userAdjustedCamera.value = true;
+      draw();
+    }
+    function onCanvasMouseUp() {
+      if (draggingNode) { draggingNode = null; persist(); }
+      isPanning = false;
+      if (canvasEl.value) canvasEl.value.style.cursor = 'grab';
+    }
+    function onCanvasWheel(e) {
+      const rect = canvasEl.value.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      const before = screenToWorld(mx, my);
+      camera.scale = Math.min(3, Math.max(0.2, camera.scale * (e.deltaY < 0 ? 1.1 : 0.9)));
+      const after = worldToScreen(before.x, before.y);
+      camera.offsetX += mx - after.x;
+      camera.offsetY += my - after.y;
+      userAdjustedCamera.value = true;
+      draw();
+    }
+
+    // ── Paleta de color por tema (Canvas no puede leer var(--bs-*)) ──
+    const PALETTES = {
+      light: {
+        bg: '#ffffff', nodeText: '#212529', edgeDefault: '#adb5bd', edgeActive: '#0dcaf0', edgeBlocked: '#dc3545',
+        edgeDragon: '#fd7e14', edgePrince: '#198754', edgePath: '#198754', weightText: '#495057',
+        nodeFill: '#e9ecef', nodeStroke: '#6c757d',
+        princeFill: '#cfe2ff', princeStroke: '#0d6efd', princessFill: '#f7d6e6', princessStroke: '#d63384',
+        dragonFill: '#ffe5d0', dragonStroke: '#fd7e14', dragonText: '#c2410c', princeText: '#0a58ca',
+      },
+      dark: {
+        bg: '#212529', nodeText: '#f8f9fa', edgeDefault: '#6c757d', edgeActive: '#6edff6', edgeBlocked: '#ea868f',
+        edgeDragon: '#feb272', edgePrince: '#75b798', edgePath: '#75b798', weightText: '#dee2e6',
+        nodeFill: '#343a40', nodeStroke: '#adb5bd',
+        princeFill: '#0a3a7a', princeStroke: '#6ea8fe', princessFill: '#6b1f45', princessStroke: '#e685b5',
+        dragonFill: '#7a3d0b', dragonStroke: '#feb272', dragonText: '#feb272', princeText: '#6ea8fe',
+      },
+    };
+    function palette() { return PALETTES[isDark.value ? 'dark' : 'light']; }
+
+    function nodeByLabel(label) { return nodes.value.find(n => n.label === label); }
+
+    // Curva de un sendero en pantalla: recta si es el único entre sus dos claros, o un arco
+    // (cuadrática, control = punto medio corrido en la perpendicular) si hay varios en paralelo.
+    function edgeGeom(e) {
+      const [lo, hi] = [e.a, e.b].sort();
+      const from = nodeByLabel(lo), to = nodeByLabel(hi);
+      if (!from || !to) return null;
+      const p1 = worldToScreen(from.x, from.y), p2 = worldToScreen(to.x, to.y);
+      const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+      const len = Math.hypot(p2.x - p1.x, p2.y - p1.y) || 1;
+      const bow = e.off * PARALLEL_GAP * camera.scale;
+      const px = -(p2.y - p1.y) / len * bow, py = (p2.x - p1.x) / len * bow;
+      return { p1, p2, c: { x: mx + px * 2, y: my + py * 2 }, label: { x: mx + px, y: my + py } };
+    }
+
+    function resizeCanvasToDisplaySize() {
+      const canvas = canvasEl.value, container = containerEl.value;
+      if (!canvas || !container) return;
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = container.clientWidth * dpr;
+      canvas.height = container.clientHeight * dpr;
+      canvas.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function draw() {
+      const canvas = canvasEl.value;
+      if (!canvas || !containerEl.value) return;
+      const ctx = canvas.getContext('2d');
+      const w = containerEl.value.clientWidth, h = containerEl.value.clientHeight;
+      const pal = palette();
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = pal.bg;
+      ctx.fillRect(0, 0, w, h);
+
+      const step = currentStep.value;
+      const hlKey = step ? step.highlightEdge : null;
+      const r = NODE_R * camera.scale;
+      const { principe, princesa, dragones } = problem.value;
+
+      for (const e of edges.value) {
+        if (e.a === e.b) continue;
+        const g = edgeGeom(e);
+        if (!g) continue;
+        const cls = step ? step.edgeClass[e.key] : undefined;
+        const isActive = e.key === hlKey;
+        const activeColor = step && step.highlightKind === 'blocked' ? pal.edgeBlocked : pal.edgeActive;
+        const color = isActive ? activeColor
+          : cls === 'dragon' ? pal.edgeDragon
+          : cls === 'path' ? pal.edgePath
+          : cls === 'prince' ? pal.edgePrince
+          : pal.edgeDefault;
+
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = isActive ? 4 : cls === 'path' ? 5 : cls ? 3 : 1.5;
+        ctx.beginPath();
+        ctx.moveTo(g.p1.x, g.p1.y);
+        ctx.quadraticCurveTo(g.c.x, g.c.y, g.p2.x, g.p2.y);
+        ctx.stroke();
+
+        // Largo del sendero en el punto medio.
+        const text = String(e.w);
+        ctx.font = `bold ${Math.max(10, 13 * camera.scale)}px system-ui, sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        const tw = ctx.measureText(text).width + 6;
+        const th = Math.max(14, 17 * camera.scale);
+        ctx.fillStyle = pal.bg;
+        ctx.fillRect(g.label.x - tw / 2, g.label.y - th / 2, tw, th);
+        ctx.fillStyle = color === pal.edgeDefault ? pal.weightText : color;
+        ctx.fillText(text, g.label.x, g.label.y);
+        ctx.restore();
+      }
+
+      for (const n of nodes.value) {
+        const p = worldToScreen(n.x, n.y);
+        const isPrince = n.label === principe, isPrincess = n.label === princesa, isDragon = dragones.includes(n.label);
+        const isEndpoint = step && step.endpoints.includes(n.label);
+        const onPath = step && step.pathNodes.includes(n.label);
+        const isDone = step && step.done.includes(n.label);
+
+        let fill = pal.nodeFill, stroke = pal.nodeStroke;
+        if (isPrince) { fill = pal.princeFill; stroke = pal.princeStroke; }
+        else if (isPrincess) { fill = pal.princessFill; stroke = pal.princessStroke; }
+        else if (isDragon) { fill = pal.dragonFill; stroke = pal.dragonStroke; }
+        if (isDone) stroke = step.phase === 1 ? pal.edgeDragon : pal.edgePrince;
+        if (onPath) stroke = pal.edgePath;
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = fill;
+        ctx.fill();
+        ctx.lineWidth = isEndpoint || onPath ? 4 : isDone ? 3 : 1.5;
+        ctx.strokeStyle = isEndpoint ? (step.highlightKind === 'blocked' && n.label === step.compare ? pal.edgeBlocked : pal.edgeActive) : stroke;
+        ctx.stroke();
+
+        ctx.fillStyle = pal.nodeText;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = `${Math.max(10, 13 * camera.scale)}px system-ui, sans-serif`;
+        ctx.fillText(n.label, p.x, p.y);
+
+        // Rol del claro, arriba del nodo.
+        const role = (isPrince ? '🤴' : '') + (isPrincess ? '👸' : '') + (isDragon ? '🐉' : '');
+        if (role) {
+          ctx.font = `${Math.max(12, 16 * camera.scale)}px system-ui, sans-serif`;
+          ctx.fillText(role, p.x, p.y - r - 9 * camera.scale);
+        }
+
+        // Tiempos conocidos, abajo del nodo: d = dragón[v] (naranja), t = tiempo[v] (azul).
+        if (step) {
+          const segs = [];
+          if (step.dd[n.label] !== Infinity) segs.push({ text: `d=${step.dd[n.label]}`, color: pal.dragonText });
+          if (step.tp && step.tp[n.label] !== Infinity) segs.push({ text: `t=${step.tp[n.label]}`, color: pal.princeText });
+          if (segs.length) {
+            ctx.font = `bold ${Math.max(10, 12 * camera.scale)}px system-ui, sans-serif`;
+            const gap = 6;
+            const widths = segs.map(sg => ctx.measureText(sg.text).width);
+            let x = p.x - (widths.reduce((a, b) => a + b, 0) + gap * (segs.length - 1)) / 2;
+            ctx.textAlign = 'left';
+            segs.forEach((sg, i) => {
+              ctx.fillStyle = sg.color;
+              ctx.fillText(sg.text, x, p.y + r + 11 * camera.scale);
+              x += widths[i] + gap;
+            });
+          }
+        }
+      }
+    }
+
+    // ── Tema claro/oscuro ──
+    function toggleTheme() {
+      isDark.value = !isDark.value;
+      const theme = isDark.value ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-bs-theme', theme);
+      localStorage.setItem('theme', theme);
+      draw();
+    }
+
+    // ── Ciclo de vida ──
+    function handleContainerResize() {
+      resizeCanvasToDisplaySize();
+      if (!userAdjustedCamera.value) fitToView();
+      draw();
+    }
+    // ResizeObserver y no window.resize: el canvas también cambia de tamaño cuando
+    // el panel de datos o la tabla de seguimiento cambian según su contenido.
+    const resizeObserver = new ResizeObserver(handleContainerResize);
+    onMounted(() => {
+      loadInitialState();
+      resizeCanvasToDisplaySize();
+      fitToView();
+      draw();
+      resizeObserver.observe(containerEl.value);
+    });
+    onBeforeUnmount(() => {
+      resizeObserver.disconnect();
+      stopAutoplay();
+    });
+
+    return {
+      nodes, PSEUDOCODE, NB_CLASS, NB_TITLE, MAX_N, MAX_EDGES, tab, fmtT,
+      steps, currentStepIndex, currentStep, isAtEnd, sortedLabels,
+      isOpenRow, ddCellClass, tpCellClass,
+      isPlaying, speedMs, togglePlay, stepForward, stepBackward, restartAnimation,
+      showEditor, inputDraft, inputError, applyInput,
+      newConfirm, handleNewClick, shareCopied, shareCurrentState,
+      isDark, toggleTheme, fitToView,
+      canvasEl, containerEl, onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseUp, onCanvasWheel,
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

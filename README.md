@@ -151,6 +151,28 @@ Todas permiten:
 - Botón "🆕 Nuevo": vuelve a los valores de ejemplo (con confirmación de 2 pasos).
 - Botón "🔗 Compartir": copia un link con la configuración actual (cadenas, capacidad, elementos, costos) codificada en la URL — al abrirlo la carga directo, sin backend.
 
+### Ejercicios
+
+Resolución paso a paso de ejercicios propuestos, con el mismo formato que el resto.
+
+| Archivo | Tema | Complejidad |
+|---|---|---|
+| [`ejercicios/PuertoGaviota.html`](ejercicios/PuertoGaviota.html) | Puerto Gaviota: el metro (MST con pesos 0/1: túneles gratis, mínimo de puentes) | O((N+K+M)·α(N)) |
+| [`ejercicios/RescatandoALaPrincesa.html`](ejercicios/RescatandoALaPrincesa.html) | Rescatando a la Princesa (Dijkstra multi-origen de los dragones + Dijkstra podado del príncipe) | O((c+s)·log c) |
+| [`ejercicios/CaminoAUNLaM.html`](ejercicios/CaminoAUNLaM.html) | Camino a UNLaM (Dijkstra desde Casa sobre el grafo de tramos, con tabla de iteraciones S / V − S / w / D / P y reconstrucción del camino) | O((V+E)·log V) |
+
+Salvo Camino a UNLaM (que es `grafos/dijkstra.html` con el grafo y las preguntas de la consigna), usan el formato de entrada del enunciado y tienen pseudocódigo con la línea activa, tabla de seguimiento y una pestaña "Resolución" con lo que pide el enunciado (modelado, pseudocódigo, complejidad).
+
+### Sendero: El Camino más corto a Mordor
+
+Un sendero es una serie de ejercicios sobre una misma pregunta de fondo. Cada uno está en `Sendero/<TemaDelSendero>/` y tiene, como los de `ejercicios/`, una pestaña "Resolución" con las respuestas a lo que pide el enunciado.
+
+| Archivo | Tema | Dificultad |
+|---|---|---|
+| [`Sendero/CaminoMasCortoAMordor/ElCaminoABree.html`](Sendero/CaminoMasCortoAMordor/ElCaminoABree.html) | El Camino a Bree: BFS y Dijkstra con peso 1 sobre la misma red, con la frontera por día y la comparación de vectores | ★☆☆☆☆ |
+| [`Sendero/CaminoMasCortoAMordor/CaradhrasOMoria.html`](Sendero/CaminoMasCortoAMordor/CaradhrasOMoria.html) | Caradhras o Moria: traza de Dijkstra desde Rivendel, predecesores y por qué una distancia tentativa no se cierra | ★★☆☆☆ |
+| [`Sendero/CaminoMasCortoAMordor/LaSombraDelAnillo.html`](Sendero/CaminoMasCortoAMordor/LaSombraDelAnillo.html) | La Sombra del Anillo: Dijkstra con pesos negativos, dónde se rompe y el ciclo negativo | ★★★☆☆ |
+
 ## Cómo usarlas
 
 Abrir el `.html` directamente en el navegador, o servirlas localmente:
