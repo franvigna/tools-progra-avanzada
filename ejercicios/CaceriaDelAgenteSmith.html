@@ -64,11 +64,7 @@
   <nav class="navbar navbar-dark bg-dark px-3">
     <a class="navbar-brand mb-0 h5" href="../index.html" title="Volver a todas las herramientas"><span class="opacity-75 me-1">←</span>🕶️ La Cacería del Agente Smith</a>
     <div class="d-flex align-items-center gap-2 flex-wrap">
-      <span class="badge bg-secondary">Ejercicio · {{ algoInfo.badge }}</span>
-      <div class="btn-group btn-group-sm" role="group" title="Algoritmo">
-        <button class="btn" :class="algo === 'cuadrantes' ? 'btn-light' : 'btn-outline-light'" @click="setAlgo('cuadrantes')">Cuadrantes</button>
-        <button class="btn" :class="algo === 'escalera' ? 'btn-light' : 'btn-outline-light'" @click="setAlgo('escalera')">Escalera</button>
-      </div>
+      <span class="badge bg-secondary">Ejercicio · Reducir y conquistar · O(n)</span>
       <span class="badge bg-info text-dark" v-if="currentStep" title="Llamadas a buscar() hasta ahora">Llamadas = {{ currentStep.calls }}</span>
       <span class="badge bg-warning text-dark" v-if="currentStep" :title="`Celdas comparadas con el objetivo, de ${cells} en total`">Celdas = {{ currentStep.examined }} / {{ cells }}</span>
       <span class="badge" :class="currentStep.result.found ? 'bg-success' : 'bg-danger'" v-if="currentStep && currentStep.result" title="Salida de buscarAgenteSmith">{{ currentStep.result.text }}</span>
@@ -147,13 +143,13 @@
         <div class="card">
           <div class="card-header py-1 px-2 small fw-semibold">📋 Seguimiento por llamada (cada una que mira una celda)</div>
           <div class="card-body p-2" style="overflow-x: auto;">
-            <p class="text-muted small text-center my-2" v-if="!currentStep.rows.length">La primera fila aparece cuando se calcula la mitad de la región.</p>
+            <p class="text-muted small text-center my-2" v-if="!currentStep.rows.length">La primera fila aparece cuando se mira la primera esquina.</p>
             <table class="table table-sm table-bordered text-center align-middle mb-0 small" v-else>
               <thead>
                 <tr>
                   <th class="dp-header-cell" title="Número de llamada">Llamada</th>
                   <th class="dp-header-cell" title="Subregión sobre la que trabaja">Región</th>
-                  <th class="dp-header-cell" title="Celda central de la región">Mitad</th>
+                  <th class="dp-header-cell" title="Celda de la esquina superior derecha de la región">Esquina</th>
                   <th class="dp-header-cell" title="Valor de la celda central">Valor</th>
                   <th class="dp-header-cell" title="Comparación del objetivo con el valor">objetivo vs valor</th>
                   <th class="dp-header-cell" title="Qué se descarta">Descarta</th>
@@ -186,7 +182,7 @@
           <div class="card-header fw-semibold">💻 Pseudocódigo</div>
           <div class="card-body p-0">
             <div class="pseudo-code">
-              <div v-for="(line, idx) in pseudocode" :key="idx" class="pseudo-line"
+              <div v-for="(line, idx) in PSEUDOCODE" :key="idx" class="pseudo-line"
                 :class="{ 'pseudo-active': currentStep && currentStep.activeLines.includes(idx) }">{{ line }}</div>
             </div>
           </div>
@@ -231,10 +227,10 @@
           <div class="card-header fw-semibold">Leyenda</div>
           <ul class="list-group list-group-flush small">
             <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-primary-subtle text-primary-emphasis border">&nbsp;&nbsp;</span> Región en la que se está buscando</li>
-            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-warning-subtle text-warning-emphasis border border-warning">&nbsp;&nbsp;</span> Celda que se compara con el objetivo (la mitad, o la esquina en la escalera)</li>
-            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-danger-subtle text-danger-emphasis border">&nbsp;&nbsp;</span> Cuadrante descartado por el orden de filas y columnas</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-warning-subtle text-warning-emphasis border border-warning">&nbsp;&nbsp;</span> Celda que se compara con el objetivo (la esquina superior derecha de la región)</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-danger-subtle text-danger-emphasis border">&nbsp;&nbsp;</span> Fila o columna descartada por el orden de filas y columnas</li>
             <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-secondary-subtle text-secondary-emphasis border">&nbsp;&nbsp;</span> Región ya recorrida sin encontrarlo</li>
-            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge border text-body">- - -</span> Celda que ya fue la mitad de alguna llamada</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge border text-body">- - -</span> Celda que ya se comparó con el objetivo</li>
             <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-success">&nbsp;&nbsp;</span> Smith encontrado</li>
           </ul>
         </div>
@@ -249,20 +245,7 @@
           </div>
         </div>
 
-        <div class="card mb-3" v-if="algo === 'cuadrantes'">
-          <div class="card-header fw-semibold">1 · La idea: qué se descarta con una sola comparación</div>
-          <div class="card-body">
-            <ul class="mb-0">
-              <li>Se toma la <b>celda central</b> de la región y se la compara con el objetivo.</li>
-              <li>Si <b>objetivo &lt; central</b>: todo lo que está abajo y a la derecha de la central es mayor o igual que ella (crece por fila y por columna), así que el objetivo no puede estar ahí. Se descarta ese cuadrante, y quedan <b>3 subregiones</b>: arriba-izquierda, arriba-derecha y abajo-izquierda.</li>
-              <li>Si <b>objetivo &gt; central</b>: todo lo de arriba y a la izquierda es menor o igual, se descarta, y quedan arriba-derecha, abajo-izquierda y abajo-derecha.</li>
-              <li>Si es igual, se devolvió la posición. Si una región queda vacía, se devuelve <code>[-1, -1]</code>. Cada subregión se busca con la misma función (recursión), y se devuelve la primera respuesta que no sea <code>[-1, -1]</code>.</li>
-              <li>A diferencia de la búsqueda binaria en un vector, acá una comparación solo elimina <b>un cuadrante de cuatro</b>, no la mitad: por eso se llama 3 veces a la recursión y no 1.</li>
-            </ul>
-          </div>
-        </div>
-
-        <div class="card mb-3" v-else>
+        <div class="card mb-3">
           <div class="card-header fw-semibold">1 · La idea: una esquina que descarta una fila o una columna</div>
           <div class="card-body">
             <ul class="mb-0">
@@ -270,7 +253,7 @@
               <li>Si <b>esquina &lt; objetivo</b>: todo lo que está a la izquierda en su fila es menor que ella, así que no puede ser el objetivo. Se descarta esa <b>fila</b> y se baja: <code>f + 1</code>.</li>
               <li>Si <b>esquina &gt; objetivo</b>: todo lo que está abajo en su columna es mayor, así que se descarta esa <b>columna</b> y se va a la izquierda: <code>c - 1</code>.</li>
               <li>Si es igual, se devuelve la posición. Si se acaban las filas o las columnas, <code>[-1, -1]</code>. Cada paso es <b>una sola llamada recursiva</b> sobre una matriz una fila o una columna más chica.</li>
-              <li><b>Ojo:</b> técnicamente es "reducir y conquistar" (decrease and conquer): un solo subproblema apenas más chico, en vez de varios de tamaño n/2. Cumple "recursivo" y "mejor que O(n²)"; si la rúbrica exige dividir en partes, usá la variante de cuadrantes.</li>
+              <li><b>Ojo:</b> técnicamente es "reducir y conquistar" (decrease and conquer): un solo subproblema apenas más chico, en vez de varios de tamaño n/2. Cumple "recursivo" y "mejor que O(n²)".</li>
             </ul>
           </div>
         </div>
@@ -279,13 +262,13 @@
           <div class="card-header fw-semibold">2 · Pseudocódigo y solución en Java</div>
           <div class="card-body p-0">
             <div class="pseudo-code">
-              <div v-for="(line, idx) in pseudocode" :key="idx" class="pseudo-line">{{ line }}</div>
+              <div v-for="(line, idx) in PSEUDOCODE" :key="idx" class="pseudo-line">{{ line }}</div>
             </div>
           </div>
           <div class="card-footer p-0">
             <details>
               <summary class="px-3 py-2 small fw-semibold" style="cursor: pointer;">☕ Neo.java (misma interfaz de la plantilla)</summary>
-              <pre class="small mb-0 p-3 border-top" style="overflow-x: auto;"><code>{{ javaCode }}</code></pre>
+              <pre class="small mb-0 p-3 border-top" style="overflow-x: auto;"><code>{{ JAVA_CODE }}</code></pre>
             </details>
           </div>
         </div>
@@ -293,16 +276,9 @@
         <div class="card">
           <div class="card-header fw-semibold">3 · Complejidad</div>
           <div class="card-body">
-            <ul v-if="algo === 'cuadrantes'">
-              <li>Cada llamada hace trabajo constante (calcular la mitad, comparar, armar los candidatos) y llama como mucho a 3 subregiones de la mitad de lado: <code>T(n) = 3·T(n/2) + O(1)</code>.</li>
-              <li><b>Teorema Maestro</b> con a = 3, b = 2, c = 0: como <code>a &gt; b<sup>c</sup></code> dominan las hojas, y <code>T(n) = Θ(n<sup>log₂3</sup>) ≈ Θ(n<sup>1,58</sup>)</code>. Es <b>mejor que O(n²)</b>: con n = 1000 son unas 57 000 operaciones contra 1 000 000 de celdas.</li>
-              <li><b>Mejor caso</b> O(1) (el objetivo es la celda central). <b>Espacio</b>: O(log n) de pila de recursión.</li>
-              <li><b>Cuidado con la región vacía:</b> cada subregión puede quedar vacía (por ejemplo, en una región de 1×1), y ahí se corta devolviendo <code>[-1, -1]</code>.</li>
-              <li>Un recorrido "en escalera" (arrancar en la esquina superior derecha, bajar si el objetivo es mayor e ir a la izquierda si es menor) tardaría O(n), pero no es división y conquista, así que no sirve para esta consigna.</li>
-            </ul>
-            <ul v-else>
+            <ul>
               <li>Cada llamada hace trabajo constante y descarta una fila o una columna: como mucho <code>2n − 1</code> llamadas, o sea <code>T(n) = T(n − 1) + O(1) = O(n)</code> (O(n + m) en una de n × m).</li>
-              <li>Es <b>mejor que O(n²)</b> y que la variante de cuadrantes: con n = 1000 son unas 2000 comparaciones contra unas 57 000.</li>
+              <li>Es <b>mejor que O(n²)</b>: con n = 1000 son unas 2000 comparaciones contra 1 000 000 de celdas.</li>
               <li><b>Mejor caso</b> O(1) (el objetivo está en la esquina superior derecha). <b>Espacio</b>: O(n) de pila de recursión (con un bucle serían O(1)); con matrices enormes la recursión podría desbordar la pila.</li>
             </ul>
             <p class="mb-1"><b>Cuánto trabaja con la matriz actual</b> (celdas comparadas, de {{ cells }}):</p>
@@ -332,102 +308,7 @@
 <script>
 const { createApp, ref, computed, nextTick, onMounted, onBeforeUnmount } = Vue;
 
-const PSEUDOCODE_QUAD = [
-  'ALGORITMO buscar(M, objetivo, fIni, cIni, fFin, cFin)',
-  '    SI fIni > fFin O cIni > cFin ENTONCES',
-  '        RETORNAR [-1, -1]',
-  '    fMed ← (fIni + fFin) / 2',
-  '    cMed ← (cIni + cFin) / 2',
-  '    SI M[fMed][cMed] = objetivo ENTONCES',
-  '        RETORNAR [fMed, cMed]',
-  '    SI objetivo < M[fMed][cMed] ENTONCES',
-  '        // se descarta abajo-derecha (todo ≥ M[fMed][cMed])',
-  '        candidatos ← [ (fIni, cIni, fMed-1, cMed-1),   // arriba-izquierda',
-  '                       (fIni, cMed, fMed-1, cFin),     // arriba-derecha',
-  '                       (fMed, cIni, fFin, cMed-1) ]    // abajo-izquierda',
-  '    SINO',
-  '        // se descarta arriba-izquierda (todo ≤ M[fMed][cMed])',
-  '        candidatos ← [ (fIni, cMed+1, fMed, cFin),     // arriba-derecha',
-  '                       (fMed+1, cIni, fFin, cMed),     // abajo-izquierda',
-  '                       (fMed+1, cMed+1, fFin, cFin) ]  // abajo-derecha',
-  '    PARA CADA región EN candidatos HACER',
-  '        r ← buscar(M, objetivo, región)',
-  '        SI r ≠ [-1, -1] ENTONCES RETORNAR r',
-  '    RETORNAR [-1, -1]',
-];
-
-// Solución del ejercicio, con la interfaz exacta de la plantilla (paquete pa.matrix, clase Neo).
-const JAVA_QUAD = `package pa.matrix;
-
-/**
- * Neo debe localizar al Agente Smith en los registros de la Matrix. Los datos
- * están organizados en una matriz de enteros sin elementos repetidos, donde
- * cada fila está ordenada de menor a mayor, y cada columna también está
- * ordenada de menor a mayor.
- *
- * Esta clase implementa un algoritmo de división y conquista recursivo para
- * buscar un valor objetivo en una matriz N×N ordenada por filas y columnas en
- * tiempo menor a O(n^2).
- *
- * @author COMPLETAR
- * @version 1.0
- */
-public class Neo {
-
-    /**
-     * Busca al Agente Smith en la matriz de datos de Matrix usando divide y
-     * vencerás recursivo. La matriz debe estar ordenada: cada fila creciente y cada
-     * columna creciente.
-     *
-     * @param matrizDatos matriz ordenada que representa los registros de Matrix
-     * @param codigoSmith código único del Agente Smith a buscar
-     * @return array de 2 posiciones [fila, columna] donde está Smith, o [-1, -1] si
-     *         no se encuentra
-     */
-    public int[] buscarAgenteSmith(int[][] matrizDatos, int codigoSmith) {
-        if (matrizDatos == null || matrizDatos.length == 0 || matrizDatos[0].length == 0) {
-            return new int[] { -1, -1 };
-        }
-        return buscar(matrizDatos, codigoSmith, 0, 0, matrizDatos.length - 1, matrizDatos[0].length - 1);
-    }
-
-    private int[] buscar(int[][] m, int objetivo, int fIni, int cIni, int fFin, int cFin) {
-        if (fIni > fFin || cIni > cFin) {
-            return new int[] { -1, -1 };
-        }
-        int fMed = (fIni + fFin) / 2;
-        int cMed = (cIni + cFin) / 2;
-        if (m[fMed][cMed] == objetivo) {
-            return new int[] { fMed, cMed };
-        }
-        int[] r;
-        if (objetivo < m[fMed][cMed]) {
-            // se descarta abajo-derecha
-            r = buscar(m, objetivo, fIni, cIni, fMed - 1, cMed - 1); // arriba-izquierda
-            if (r[0] != -1) {
-                return r;
-            }
-            r = buscar(m, objetivo, fIni, cMed, fMed - 1, cFin); // arriba-derecha
-            if (r[0] != -1) {
-                return r;
-            }
-            return buscar(m, objetivo, fMed, cIni, fFin, cMed - 1); // abajo-izquierda
-        }
-        // se descarta arriba-izquierda
-        r = buscar(m, objetivo, fIni, cMed + 1, fMed, cFin); // arriba-derecha
-        if (r[0] != -1) {
-            return r;
-        }
-        r = buscar(m, objetivo, fMed + 1, cIni, fFin, cMed); // abajo-izquierda
-        if (r[0] != -1) {
-            return r;
-        }
-        return buscar(m, objetivo, fMed + 1, cMed + 1, fFin, cFin); // abajo-derecha
-    }
-}
-`;
-
-// Matriz de la consigna: la mitad de la región completa es [1][1] = 5, así que con objetivo 5 termina enseguida.
+// Matriz de la consigna. Con objetivo 5 la escalera la recorre así: 11 → 7 → 4 → 5.
 const DEFAULT_MATRIX_TEXT = '1 4 7 11\n2 5 8 12\n3 6 9 16\n10 13 14 17';
 const DEFAULT_TARGET = 5;
 // Tope para que la matriz entre cómoda en pantalla.
@@ -459,19 +340,6 @@ function tex(s) { return katex.renderToString(s, { throwOnError: false }); }
 function texInline(s) {
   return s.split('$').map((t, i) => i % 2 ? tex(t) : t.replace(/&/g, '&amp;').replace(/</g, '&lt;')).join('');
 }
-// Explicación de la complejidad (card desplegable): cada fila es [línea del pseudocódigo, veces que se ejecuta, costo total]; veces, costo y total en LaTeX.
-const COMPLEXITY_QUAD = {
-  total: "\\Theta\\!\\left(n^{\\log_2 3}\\right) \\approx \\Theta(n^{1{,}58})",
-  headers: ["Línea", "Veces", "Costo"],
-  rows: [
-    ["SI fIni > fFin O cIni > cFin: RETORNAR [-1, -1]", "\\text{una por llamada}", "O(1)"],
-    ["fMed, cMed; SI M[fMed][cMed] = objetivo", "\\text{una por llamada}", "O(1)"],
-    ["SI objetivo < M[fMed][cMed]: armar los 3 candidatos", "\\text{una por llamada}", "O(1)"],
-    ["PARA CADA región EN candidatos: r ← buscar(M, objetivo, región)", "\\le 3", "3\\,T(n/2)"],
-  ],
-  note: "$T(n) = 3\\,T(n/2) + O(1)$. Por el Teorema Maestro con $a = 3$, $b = 2$ y $c = 0$, como $a > b^c$ dominan las hojas y $T(n) = \\Theta(n^{\\log_2 3}) \\approx \\Theta(n^{1{,}58})$, mejor que $O(n^2)$: para $n = 1000$ son unas $57\\,000$ operaciones contra $10^6$ celdas. Mejor caso: $O(1)$. Memoria: $O(\\log n)$ de pila de recursión.",
-};
-
 // ── Parseo de la matriz: una fila por línea. Cada fila y cada columna deben crecer (sin repetidos).
 function parseMatrix(text) {
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
@@ -494,133 +362,8 @@ function rangeText(r) {
   return `filas ${r.fi}–${r.ff}, columnas ${r.ci}–${r.cf}`;
 }
 
-// ── Corre el algoritmo una sola vez y empuja un snapshot por cada punto de parada didáctico.
-function computeStepsQuad(M, objetivo) {
-  const steps = [];
-  if (!M.length) return steps;
-  const stack = [];
-  const eliminated = [];   // rectángulos fuera de juego: 'discard' (por el orden) o 'searched' (ya recorrido sin éxito)
-  const compared = [];
-  const rows = [];
-  let found = null, openRow = false, calls = 0, examined = 0, result = null;
-
-  function snapshot(activeLines, badge) {
-    const top = stack.length ? stack[stack.length - 1] : null;
-    steps.push({
-      activeLines,
-      stack: stack.map(f => ({ label: f.label, r: { ...f.r } })),
-      region: top ? { ...top.r } : null,
-      mid: top && top.mid ? { ...top.mid } : null,
-      eliminated: eliminated.map(e => ({ kind: e.kind, r: { ...e.r } })),
-      compared: compared.map(c => [...c]),
-      found: found && { ...found },
-      rows: rows.map(r => ({ ...r })),
-      openRow, calls, examined, result,
-      badge,
-    });
-  }
-
-  // Devuelve [fila, columna] o null si no está en la región.
-  function buscar(r, label, viaLoop) {
-    calls++;
-    const frame = { label, r, mid: null };
-    stack.push(frame);
-    const hasCells = r.fi <= r.ff && r.ci <= r.cf;
-    snapshot(viaLoop ? [17, 18] : [0], {
-      icon: '📞',
-      text: `buscar(${rangeText(r)}): ${label}.`,
-      cls: 'bg-secondary',
-    });
-    if (!hasCells) {
-      snapshot([1, 2], { icon: '∅', text: 'La región está vacía (fIni > fFin o cIni > cFin): no hay nada que mirar. Se devuelve [-1, -1].', cls: 'bg-danger' });
-      stack.pop();
-      return null;
-    }
-
-    const fm = (r.fi + r.ff) >> 1, cm = (r.ci + r.cf) >> 1;
-    const v = M[fm][cm];
-    frame.mid = { f: fm, c: cm };
-    examined++;
-    compared.push([fm, cm]);
-    const row = { n: calls, label, region: `${r.fi}–${r.ff} × ${r.ci}–${r.cf}`, f: fm, c: cm, value: v, verdict: '', discard: '' };
-    rows.push(row);
-    openRow = true;
-    snapshot([3, 4, 5], {
-      icon: '🎯',
-      text: `Mitad de la región: fMed = (${r.fi} + ${r.ff}) / 2 = ${fm}, cMed = (${r.ci} + ${r.cf}) / 2 = ${cm}. M[${fm}][${cm}] = ${v}.`,
-      cls: 'bg-warning text-dark',
-    });
-
-    if (v === objetivo) {
-      found = { f: fm, c: cm };
-      row.verdict = '=';
-      snapshot([5, 6], { icon: '🏆', text: `M[${fm}][${cm}] = ${v} es el objetivo: se devuelve [${fm}, ${cm}].`, cls: 'bg-success' });
-      openRow = false;
-      stack.pop();
-      return [fm, cm];
-    }
-
-    let subs;
-    if (objetivo < v) {
-      row.verdict = '<';
-      row.discard = 'abajo-derecha';
-      eliminated.push({ kind: 'discard', r: { fi: fm, ci: cm, ff: r.ff, cf: r.cf } });
-      subs = [
-        ['arriba-izquierda', { fi: r.fi, ci: r.ci, ff: fm - 1, cf: cm - 1 }],
-        ['arriba-derecha', { fi: r.fi, ci: cm, ff: fm - 1, cf: r.cf }],
-        ['abajo-izquierda', { fi: fm, ci: r.ci, ff: r.ff, cf: cm - 1 }],
-      ];
-      snapshot([7, 8, 9, 10, 11], {
-        icon: '⬆️',
-        text: `${objetivo} < ${v}: todo lo que está abajo y a la derecha de la mitad es ≥ ${v}, así que ahí no puede estar. Se descarta ese cuadrante y quedan 3 subregiones.`,
-        cls: 'bg-primary',
-      });
-    } else {
-      row.verdict = '>';
-      row.discard = 'arriba-izquierda';
-      eliminated.push({ kind: 'discard', r: { fi: r.fi, ci: r.ci, ff: fm, cf: cm } });
-      subs = [
-        ['arriba-derecha', { fi: r.fi, ci: cm + 1, ff: fm, cf: r.cf }],
-        ['abajo-izquierda', { fi: fm + 1, ci: r.ci, ff: r.ff, cf: cm }],
-        ['abajo-derecha', { fi: fm + 1, ci: cm + 1, ff: r.ff, cf: r.cf }],
-      ];
-      snapshot([7, 12, 13, 14, 15, 16], {
-        icon: '⬇️',
-        text: `${objetivo} > ${v}: todo lo que está arriba y a la izquierda de la mitad es ≤ ${v}, así que ahí no puede estar. Se descarta ese cuadrante y quedan 3 subregiones.`,
-        cls: 'bg-primary',
-      });
-    }
-    openRow = false;
-
-    for (const [name, sub] of subs) {
-      const res = buscar(sub, name, true);
-      if (res) {
-        snapshot([19], { icon: '↩️', text: `La subregión ${name} lo encontró: se devuelve [${res[0]}, ${res[1]}] hacia arriba.`, cls: 'bg-success' });
-        stack.pop();
-        return res;
-      }
-    }
-    eliminated.push({ kind: 'searched', r: { ...r } });
-    snapshot([20], { icon: '🚫', text: `Las 3 subregiones se agotaron sin encontrarlo: en ${rangeText(r)} no está. Se devuelve [-1, -1].`, cls: 'bg-danger' });
-    stack.pop();
-    return null;
-  }
-
-  const res = buscar({ fi: 0, ci: 0, ff: M.length - 1, cf: M[0].length - 1 }, 'región completa', false);
-  const total = M.length * M[0].length;
-  result = res ? { found: true, text: `[${res[0]}, ${res[1]}]` } : { found: false, text: '[-1, -1]' };
-  snapshot(res ? [6] : [20], {
-    icon: '🏁',
-    text: res
-      ? `Smith está en [${res[0]}, ${res[1]}]. Se compararon ${examined} celdas de ${total}.`
-      : `Smith no está en la matriz: [-1, -1]. Se compararon ${examined} celdas de ${total}.`,
-    cls: res ? 'bg-success' : 'bg-danger',
-  });
-  return steps;
-}
-
-// ── Variante "escalera" (reducir y conquistar): una sola subllamada, que descarta una fila o una columna.
-const PSEUDOCODE_STAIR = [
+// ── Escalera (reducir y conquistar): una sola subllamada, que descarta una fila o una columna.
+const PSEUDOCODE = [
   'ALGORITMO buscar(M, objetivo, f, c)    // se llama con f = 0, c = columnas-1',
   '    SI f ≥ filas O c < 0 ENTONCES',
   '        RETORNAR [-1, -1]',
@@ -633,7 +376,8 @@ const PSEUDOCODE_STAIR = [
   '        RETORNAR buscar(M, objetivo, f, c - 1)',
 ];
 
-const JAVA_STAIR = `package pa.matrix;
+// Solución del ejercicio, con la interfaz exacta de la plantilla (paquete pa.matrix, clase Neo).
+const JAVA_CODE = `package pa.matrix;
 
 /**
  * Neo debe localizar al Agente Smith en los registros de la Matrix. Los datos
@@ -682,7 +426,8 @@ public class Neo {
 }
 `;
 
-const COMPLEXITY_STAIR = {
+// Explicación de la complejidad (card desplegable): cada fila es [línea del pseudocódigo, veces que se ejecuta, costo total]; veces, costo y total en LaTeX.
+const COMPLEXITY = {
   total: "O(n)",
   headers: ["Línea", "Veces", "Costo"],
   rows: [
@@ -693,7 +438,8 @@ const COMPLEXITY_STAIR = {
   note: "Cada llamada descarta una fila o una columna, así que en una matriz de $n \\times n$ hay a lo sumo $2n - 1$ llamadas con trabajo constante: $T(n) = T(n-1) + O(1)$ si se cuenta el lado, es decir $O(n)$ ($O(n + m)$ en una de $n \\times m$). Mejor caso: $O(1)$. La pila de recursión llega a $O(n)$ (iterativo serían $O(1)$ de memoria). Es \"reducir y conquistar\": un solo subproblema un poco más chico, en vez de varios de tamaño $n/2$.",
 };
 
-function computeStepsStair(M, objetivo) {
+// ── Corre el algoritmo una sola vez y empuja un snapshot por cada punto de parada didáctico.
+function computeSteps(M, objetivo) {
   const steps = [];
   if (!M.length) return steps;
   const nRows = M.length, cols = M[0].length;
@@ -795,22 +541,11 @@ function computeStepsStair(M, objetivo) {
   return steps;
 }
 
-const ALGOS = {
-  cuadrantes: { pseudo: PSEUDOCODE_QUAD, java: JAVA_QUAD, complexity: COMPLEXITY_QUAD, steps: computeStepsQuad, badge: 'División y conquista · Θ(n^1,58)' },
-  escalera: { pseudo: PSEUDOCODE_STAIR, java: JAVA_STAIR, complexity: COMPLEXITY_STAIR, steps: computeStepsStair, badge: 'Reducir y conquistar · O(n)' },
-};
-function computeSteps(M, objetivo, algo) { return ALGOS[algo].steps(M, objetivo); }
-
 createApp({
   setup() {
     const STORAGE_KEY = 'pa-tools-ejercicios-caceria-del-agente-smith';
 
     const matrix = ref([]);
-    const algo = ref('cuadrantes');
-    const algoInfo = computed(() => ALGOS[algo.value]);
-    const pseudocode = computed(() => algoInfo.value.pseudo);
-    const javaCode = computed(() => algoInfo.value.java);
-    const complexity = computed(() => algoInfo.value.complexity);
     const objetivo = ref(DEFAULT_TARGET);
     const tab = ref('pasos');
 
@@ -846,12 +581,12 @@ createApp({
       ];
       const seen = new Set();
       return picks.filter(([t]) => !seen.has(t) && seen.add(t)).map(([t, note]) => {
-        const last = computeSteps(m, t, algo.value).slice(-1)[0];
+        const last = computeSteps(m, t).slice(-1)[0];
         return { target: t, note, text: last.result.text, examined: last.examined, calls: last.calls };
       });
     });
 
-    // Una celda tiene un solo rol visible, por prioridad: encontrada > mitad > eliminada > región actual.
+    // Una celda tiene un solo rol visible, por prioridad: encontrada > esquina > eliminada > región actual.
     function cellClass(i, j) {
       const s = currentStep.value;
       if (!s) return '';
@@ -868,7 +603,7 @@ createApp({
 
     // ── Persistencia ──
     function currentState() {
-      return { matrixText: matrixDraft.value, objetivo: objetivo.value, algo: algo.value };
+      return { matrixText: matrixDraft.value, objetivo: objetivo.value };
     }
     function applyState(data) {
       const text = data.matrixText ?? matrixDraft.value;
@@ -877,7 +612,6 @@ createApp({
       matrixDraft.value = text;
       matrix.value = parsed.matrix;
       objetivo.value = Number.isInteger(data.objetivo) ? data.objetivo : objetivo.value;
-      algo.value = ALGOS[data.algo] ? data.algo : algo.value;
       regenerateSteps();
     }
     function persist() {
@@ -963,11 +697,6 @@ createApp({
       applyState({ matrixText: matrixDraft.value, objetivo: objetivo.value });
       persist();
     }
-    function setAlgo(a) {
-      algo.value = a;
-      regenerateSteps();
-      persist();
-    }
     function onTargetChange() {
       if (!Number.isInteger(objetivo.value)) objetivo.value = DEFAULT_TARGET;
       regenerateSteps();
@@ -976,7 +705,7 @@ createApp({
 
     // ── Reproducción ──
     function regenerateSteps() {
-      steps.value = computeSteps(matrix.value, objetivo.value, algo.value);
+      steps.value = computeSteps(matrix.value, objetivo.value);
       currentStepIndex.value = 0;
       stopAutoplay();
     }
@@ -1012,7 +741,7 @@ createApp({
     onBeforeUnmount(stopAutoplay);
 
     return {
-      pseudocode, javaCode, complexity, algo, algoInfo, setAlgo, MAX_SIDE, PRESET_SIZES, preset, randomSize, onPresetChange, regenerate, pickTarget, tex, texInline, rangeText,
+      PSEUDOCODE, JAVA_CODE, complexity: COMPLEXITY, MAX_SIDE, PRESET_SIZES, preset, randomSize, onPresetChange, regenerate, pickTarget, tex, texInline, rangeText,
       matrix, objetivo, tab, cells, cases, cellClass,
       steps, currentStepIndex, currentStep, isAtEnd,
       isPlaying, speedMs, togglePlay, stepForward, stepBackward, restartAnimation,
