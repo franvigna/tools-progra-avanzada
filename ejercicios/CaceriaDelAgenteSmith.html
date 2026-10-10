@@ -231,7 +231,7 @@
           <div class="card-header fw-semibold">Leyenda</div>
           <ul class="list-group list-group-flush small">
             <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-primary-subtle text-primary-emphasis border">&nbsp;&nbsp;</span> Región en la que se está buscando</li>
-            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-warning-subtle text-warning-emphasis border border-warning">&nbsp;&nbsp;</span> Celda central (mitad) que se compara con el objetivo</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-warning-subtle text-warning-emphasis border border-warning">&nbsp;&nbsp;</span> Celda que se compara con el objetivo (la mitad, o la esquina en la escalera)</li>
             <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-danger-subtle text-danger-emphasis border">&nbsp;&nbsp;</span> Cuadrante descartado por el orden de filas y columnas</li>
             <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-secondary-subtle text-secondary-emphasis border">&nbsp;&nbsp;</span> Región ya recorrida sin encontrarlo</li>
             <li class="list-group-item d-flex align-items-center gap-2"><span class="badge border text-body">- - -</span> Celda que ya fue la mitad de alguna llamada</li>
@@ -266,9 +266,9 @@
           <div class="card-header fw-semibold">1 · La idea: una esquina que descarta una fila o una columna</div>
           <div class="card-body">
             <ul class="mb-0">
-              <li>Se mira la esquina <b>inferior izquierda</b> de la región: es la mayor de su columna y la menor de su fila.</li>
-              <li>Si <b>esquina &lt; objetivo</b>: todo lo que está arriba en su columna es menor que ella, así que no puede ser el objetivo. Se descarta esa <b>columna</b> y se sigue con <code>c + 1</code>.</li>
-              <li>Si <b>esquina &gt; objetivo</b>: todo lo que está a la derecha en su fila es mayor, así que se descarta esa <b>fila</b> y se sigue con <code>f - 1</code>.</li>
+              <li>Se mira la esquina <b>superior derecha</b> de la región: es la mayor de su fila y la menor de su columna. Primero se revisa la última columna, y de ahí se va hacia la izquierda y hacia abajo, como una escalera.</li>
+              <li>Si <b>esquina &lt; objetivo</b>: todo lo que está a la izquierda en su fila es menor que ella, así que no puede ser el objetivo. Se descarta esa <b>fila</b> y se baja: <code>f + 1</code>.</li>
+              <li>Si <b>esquina &gt; objetivo</b>: todo lo que está abajo en su columna es mayor, así que se descarta esa <b>columna</b> y se va a la izquierda: <code>c - 1</code>.</li>
               <li>Si es igual, se devuelve la posición. Si se acaban las filas o las columnas, <code>[-1, -1]</code>. Cada paso es <b>una sola llamada recursiva</b> sobre una matriz una fila o una columna más chica.</li>
               <li><b>Ojo:</b> técnicamente es "reducir y conquistar" (decrease and conquer): un solo subproblema apenas más chico, en vez de varios de tamaño n/2. Cumple "recursivo" y "mejor que O(n²)"; si la rúbrica exige dividir en partes, usá la variante de cuadrantes.</li>
             </ul>
@@ -303,7 +303,7 @@
             <ul v-else>
               <li>Cada llamada hace trabajo constante y descarta una fila o una columna: como mucho <code>2n − 1</code> llamadas, o sea <code>T(n) = T(n − 1) + O(1) = O(n)</code> (O(n + m) en una de n × m).</li>
               <li>Es <b>mejor que O(n²)</b> y que la variante de cuadrantes: con n = 1000 son unas 2000 comparaciones contra unas 57 000.</li>
-              <li><b>Mejor caso</b> O(1) (el objetivo está en la esquina inferior izquierda). <b>Espacio</b>: O(n) de pila de recursión (con un bucle serían O(1)); con matrices enormes la recursión podría desbordar la pila.</li>
+              <li><b>Mejor caso</b> O(1) (el objetivo está en la esquina superior derecha). <b>Espacio</b>: O(n) de pila de recursión (con un bucle serían O(1)); con matrices enormes la recursión podría desbordar la pila.</li>
             </ul>
             <p class="mb-1"><b>Cuánto trabaja con la matriz actual</b> (celdas comparadas, de {{ cells }}):</p>
             <table class="table table-sm table-bordered text-center mb-0 mini-table small" style="width: auto;">
@@ -621,16 +621,16 @@ function computeStepsQuad(M, objetivo) {
 
 // ── Variante "escalera" (reducir y conquistar): una sola subllamada, que descarta una fila o una columna.
 const PSEUDOCODE_STAIR = [
-  'ALGORITMO buscar(M, objetivo, f, c)    // se llama con f = filas-1, c = 0',
-  '    SI f < 0 O c ≥ columnas ENTONCES',
+  'ALGORITMO buscar(M, objetivo, f, c)    // se llama con f = 0, c = columnas-1',
+  '    SI f ≥ filas O c < 0 ENTONCES',
   '        RETORNAR [-1, -1]',
   '    SI M[f][c] = objetivo ENTONCES RETORNAR [f, c]',
   '    SI M[f][c] < objetivo ENTONCES',
-  '        // se descarta la columna c (todo lo de arriba es menor)',
-  '        RETORNAR buscar(M, objetivo, f, c + 1)',
+  '        // se descarta la fila f (todo lo de la izquierda es menor)',
+  '        RETORNAR buscar(M, objetivo, f + 1, c)',
   '    SINO',
-  '        // se descarta la fila f (todo lo de la derecha es mayor)',
-  '        RETORNAR buscar(M, objetivo, f - 1, c)',
+  '        // se descarta la columna c (todo lo de abajo es mayor)',
+  '        RETORNAR buscar(M, objetivo, f, c - 1)',
 ];
 
 const JAVA_STAIR = `package pa.matrix;
@@ -664,20 +664,20 @@ public class Neo {
         if (matrizDatos == null || matrizDatos.length == 0 || matrizDatos[0].length == 0) {
             return new int[] { -1, -1 };
         }
-        return buscar(matrizDatos, codigoSmith, matrizDatos.length - 1, 0);
+        return buscar(matrizDatos, codigoSmith, 0, matrizDatos[0].length - 1);
     }
 
     private int[] buscar(int[][] m, int objetivo, int f, int c) {
-        if (f < 0 || c >= m[0].length) {
+        if (f >= m.length || c < 0) {
             return new int[] { -1, -1 };
         }
         if (m[f][c] == objetivo) {
             return new int[] { f, c };
         }
         if (m[f][c] < objetivo) {
-            return buscar(m, objetivo, f, c + 1); // se descarta la columna c
+            return buscar(m, objetivo, f + 1, c); // se descarta la fila f
         }
-        return buscar(m, objetivo, f - 1, c); // se descarta la fila f
+        return buscar(m, objetivo, f, c - 1); // se descarta la columna c
     }
 }
 `;
@@ -686,9 +686,9 @@ const COMPLEXITY_STAIR = {
   total: "O(n)",
   headers: ["Línea", "Veces", "Costo"],
   rows: [
-    ["SI f < 0 O c ≥ columnas: RETORNAR [-1, -1]", "\\le 2n", "O(n)"],
+    ["SI f ≥ filas O c < 0: RETORNAR [-1, -1]", "\\le 2n", "O(n)"],
     ["SI M[f][c] = objetivo: RETORNAR [f, c]", "\\le 2n - 1", "O(n)"],
-    ["SI M[f][c] < objetivo: buscar(f, c + 1), SINO buscar(f - 1, c)", "\\le 2n - 1", "O(n)"],
+    ["SI M[f][c] < objetivo: buscar(f + 1, c), SINO buscar(f, c - 1)", "\\le 2n - 1", "O(n)"],
   ],
   note: "Cada llamada descarta una fila o una columna, así que en una matriz de $n \\times n$ hay a lo sumo $2n - 1$ llamadas con trabajo constante: $T(n) = T(n-1) + O(1)$ si se cuenta el lado, es decir $O(n)$ ($O(n + m)$ en una de $n \\times m$). Mejor caso: $O(1)$. La pila de recursión llega a $O(n)$ (iterativo serían $O(1)$ de memoria). Es \"reducir y conquistar\": un solo subproblema un poco más chico, en vez de varios de tamaño $n/2$.",
 };
@@ -696,7 +696,7 @@ const COMPLEXITY_STAIR = {
 function computeStepsStair(M, objetivo) {
   const steps = [];
   if (!M.length) return steps;
-  const cols = M[0].length;
+  const nRows = M.length, cols = M[0].length;
   const stack = [];
   const eliminated = [];
   const compared = [];
@@ -719,15 +719,15 @@ function computeStepsStair(M, objetivo) {
     });
   }
 
-  // Devuelve [fila, columna] o null. La región es lo que queda: filas 0..f, columnas c..última.
+  // Devuelve [fila, columna] o null. La región es lo que queda: filas f..última, columnas 0..c.
   function buscar(f, c) {
     calls++;
-    const r = { fi: 0, ci: c, ff: f, cf: cols - 1 };
+    const r = { fi: f, ci: 0, ff: nRows - 1, cf: c };
     const frame = { label: `buscar(f = ${f}, c = ${c})`, r, mid: null };
     stack.push(frame);
     snapshot([0], { icon: '📞', text: `buscar(f = ${f}, c = ${c}): queda la región ${rangeText(r)}.`, cls: 'bg-secondary' });
-    if (f < 0 || c >= cols) {
-      snapshot([1, 2], { icon: '∅', text: `${f < 0 ? 'Se acabaron las filas (f < 0)' : 'Se acabaron las columnas (c ≥ columnas)'}: no queda nada por mirar. Se devuelve [-1, -1].`, cls: 'bg-danger' });
+    if (f >= nRows || c < 0) {
+      snapshot([1, 2], { icon: '∅', text: `${f >= nRows ? 'Se acabaron las filas (f ≥ filas)' : 'Se acabaron las columnas (c < 0)'}: no queda nada por mirar. Se devuelve [-1, -1].`, cls: 'bg-danger' });
       stack.pop();
       return null;
     }
@@ -736,12 +736,12 @@ function computeStepsStair(M, objetivo) {
     frame.mid = { f, c };
     examined++;
     compared.push([f, c]);
-    const row = { n: calls, label: `f = ${f}, c = ${c}`, region: `0–${f} × ${c}–${cols - 1}`, f, c, value: v, verdict: '', discard: '' };
+    const row = { n: calls, label: `f = ${f}, c = ${c}`, region: `${f}–${nRows - 1} × 0–${c}`, f, c, value: v, verdict: '', discard: '' };
     rows.push(row);
     openRow = true;
     snapshot([3], {
       icon: '🎯',
-      text: `Se mira la esquina inferior izquierda de la región: M[${f}][${c}] = ${v}. Es la mayor de su columna (dentro de la región) y la menor de su fila.`,
+      text: `Se mira la esquina superior derecha de la región: M[${f}][${c}] = ${v}. Es la mayor de su fila y la menor de su columna (dentro de la región).`,
       cls: 'bg-warning text-dark',
     });
 
@@ -756,34 +756,34 @@ function computeStepsStair(M, objetivo) {
 
     if (v < objetivo) {
       row.verdict = '<';
-      row.discard = `columna ${c}`;
-      eliminated.push({ kind: 'discard', r: { fi: 0, ci: c, ff: f, cf: c } });
+      row.discard = `fila ${f}`;
+      eliminated.push({ kind: 'discard', r: { fi: f, ci: 0, ff: f, cf: c } });
       snapshot([4, 5, 6], {
-        icon: '➡️',
-        text: `${v} < ${objetivo}: todo lo que está arriba de M[${f}][${c}] en su columna es menor que ${v}, así que no es el objetivo. Se descarta la columna ${c} y se sigue con c + 1.`,
+        icon: '⬇️',
+        text: `${v} < ${objetivo}: todo lo que está a la izquierda de M[${f}][${c}] en su fila es menor que ${v}, así que no es el objetivo. Se descarta la fila ${f} y se sigue con f + 1.`,
         cls: 'bg-primary',
       });
       openRow = false;
-      const res = buscar(f, c + 1);
+      const res = buscar(f + 1, c);
       stack.pop();
       return res;
     }
     row.verdict = '>';
-    row.discard = `fila ${f}`;
-    eliminated.push({ kind: 'discard', r: { fi: f, ci: c, ff: f, cf: cols - 1 } });
+    row.discard = `columna ${c}`;
+    eliminated.push({ kind: 'discard', r: { fi: f, ci: c, ff: nRows - 1, cf: c } });
     snapshot([7, 8, 9], {
-      icon: '⬆️',
-      text: `${v} > ${objetivo}: todo lo que está a la derecha de M[${f}][${c}] en su fila es mayor que ${v}, así que no es el objetivo. Se descarta la fila ${f} y se sigue con f - 1.`,
+      icon: '⬅️',
+      text: `${v} > ${objetivo}: todo lo que está abajo de M[${f}][${c}] en su columna es mayor que ${v}, así que no es el objetivo. Se descarta la columna ${c} y se sigue con c - 1.`,
       cls: 'bg-primary',
     });
     openRow = false;
-    const res = buscar(f - 1, c);
+    const res = buscar(f, c - 1);
     stack.pop();
     return res;
   }
 
-  const res = buscar(M.length - 1, 0);
-  const total = M.length * cols;
+  const res = buscar(0, cols - 1);
+  const total = nRows * cols;
   result = res ? { found: true, text: `[${res[0]}, ${res[1]}]` } : { found: false, text: '[-1, -1]' };
   snapshot(res ? [3] : [2], {
     icon: '🏁',
