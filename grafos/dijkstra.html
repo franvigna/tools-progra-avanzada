@@ -50,16 +50,14 @@
       .data-panel { max-width: none; border-left: none; border-top: 1px solid var(--bs-border-color); }
       .code-panel { border-left: none; border-top: 1px solid var(--bs-border-color); }
     }
+    summary.card-header { cursor: pointer; }
   </style>
 </head>
 <body>
 <div id="app">
 
   <nav class="navbar navbar-dark bg-dark px-3">
-    <div class="d-flex align-items-center gap-2">
-      <a href="../index.html" class="btn btn-sm btn-outline-light" title="Volver al inicio">←</a>
-      <span class="navbar-brand mb-0 h5">🛣️ Dijkstra — Caminos Mínimos</span>
-    </div>
+    <a class="navbar-brand mb-0 h5" href="../index.html" title="Volver a todas las herramientas"><span class="opacity-75 me-1">←</span>🛣️ Dijkstra — Caminos Mínimos</a>
     <div class="d-flex align-items-center gap-2 flex-wrap">
       <span class="badge bg-secondary">Grafos · O((V+E)·log V)</span>
       <select class="form-select form-select-sm" style="width:auto" v-if="nodes.length"
@@ -248,6 +246,22 @@
             <p class="small text-muted mt-3 mb-0" v-if="currentStep">Paso {{ currentStepIndex + 1 }} de {{ steps.length }}</p>
           </div>
         </div>
+
+        <details class="card mb-3">
+          <summary class="card-header fw-semibold">⏱️ Complejidad: <span v-html="tex(complexity.total)"></span></summary>
+          <div class="card-body p-2" style="overflow-x: auto;">
+            <table class="table table-sm table-bordered align-middle mb-2 small">
+              <thead><tr><th v-for="h in complexity.headers" :key="h" class="dp-header-cell">{{ h }}</th></tr></thead>
+              <tbody>
+                <tr v-for="(r, idx) in complexity.rows" :key="idx">
+                  <td class="font-monospace">{{ r[0] }}</td>
+                  <td v-for="(c, k) in r.slice(1)" :key="k" :class="{ 'text-nowrap': k === r.length - 2 }" v-html="tex(c)"></td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="small mb-0" v-html="texInline(complexity.note)"></p>
+          </div>
+        </details>
 
         <div class="card">
           <div class="card-header fw-semibold">Leyenda</div>
@@ -460,6 +474,29 @@ function layoutNodes(nodeLabels, existingPositions) {
   });
   return positions;
 }
+
+// Fórmula LaTeX → HTML, para v-html (renderToString: las celdas salen de un v-for, sin id ni nextTick).
+function tex(s) { return katex.renderToString(s, { throwOnError: false }); }
+// Texto con fórmulas entre $…$: los tramos impares son LaTeX, el resto texto plano (escapado).
+function texInline(s) {
+  return s.split('$').map((t, i) => i % 2 ? tex(t) : t.replace(/&/g, '&amp;').replace(/</g, '&lt;')).join('');
+}
+// Explicación de la complejidad (card desplegable): cada fila es [línea del pseudocódigo, veces que se ejecuta, costo total]; veces, costo y total en LaTeX.
+const COMPLEXITY = {
+  total: "O((V+E) \\log V)",
+  headers: ["Línea", "Veces", "Costo"],
+  rows: [
+    ["PARA CADA v EN V(G): distancia[v] ← ∞; visitado[v] ← FALSO", "V", "O(V)"],
+    ["distancia[s] ← 0; agregar(cola, s, 0)", "1", "O(1)"],
+    ["MIENTRAS NO estaVacia(cola)", "\\le E + 1", "O(E)"],
+    ["v ← extraerMinimo(cola)", "\\le E + 1", "O(E \\log V)"],
+    ["SI NO visitado[v]: visitado[v] ← VERDADERO", "\\le E + 1 \\text{ (entra } V \\text{ veces)}", "O(E)"],
+    ["PARA CADA w EN sucesores(G, v)", "E \\text{ en total}", "O(E)"],
+    ["SI distancia[w] > distancia[v] + peso(v, w)", "E", "O(E)"],
+    ["distancia[w] ← …; predecesores[w] ← v; agregar(cola, w, …)", "\\le E", "O(E \\log V)"],
+  ],
+  note: "La cola es un heap sin \"decrementar clave\": cada relajación agrega una entrada nueva, así que puede llegar a tener $E + 1$, y las viejas se descartan al extraerlas (SI NO visitado). Cada operación del heap cuesta $O(\\log E)$, y como $E \\le V^2$, $\\log E \\le 2 \\log V = O(\\log V)$. Total: $O(V) + O(E \\log V) = O((V+E) \\log V)$. En un grafo no dirigido, $E$ cuenta cada arista en los dos sentidos. Con matriz de adyacencia y sin heap (buscando el mínimo a mano) es $O(V^2)$.",
+};
 
 createApp({
   setup() {
@@ -896,6 +933,7 @@ createApp({
     });
 
     return {
+      complexity: COMPLEXITY, tex, texInline,
       nodes, sortedNodes, weights, directed, toggleDirected, startId, onStartChange, PSEUDOCODE,
       steps, currentStepIndex, currentStep, isAtEnd,
       matrixCellClass, dpCellClass, isOpenRow, traceCellClass, fmt, fmtSet,
