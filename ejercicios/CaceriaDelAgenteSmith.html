@@ -24,11 +24,11 @@
     #app { display: flex; flex-direction: column; height: 100vh; }
     .main-row { flex: 1 1 auto; display: flex; min-height: 0; }
     .left-col { flex: 2 1 0; display: flex; flex-direction: column; min-width: 0; }
-    .matrix-wrap { flex: 1 1 60%; position: relative; overflow: auto; padding: 1rem; display: flex; align-items: center; justify-content: center; min-height: 0; }
+    .matrix-wrap { flex: 1 1 60%; position: relative; overflow: auto; padding: 1rem; display: flex; align-items: flex-start; justify-content: center; gap: 1rem; min-height: 0; }
     .trace-wrap { flex: 1 1 40%; overflow: auto; border-top: 1px solid var(--bs-border-color); padding: .5rem; }
     .code-panel { flex: 1 1 0; overflow-y: auto; border-left: 1px solid var(--bs-border-color); min-width: 300px; }
     .footer-bar { flex: 0 0 auto; padding: .25rem 0; }
-    .stack-panel { position: absolute; top: .75rem; right: .75rem; width: 230px; max-height: 55%; overflow-y: auto; }
+    .stack-panel { flex: 0 0 230px; max-height: 100%; overflow-y: auto; }
     .editor-panel { position: absolute; bottom: .75rem; left: .75rem; width: 300px; max-width: calc(100% - 1.5rem); z-index: 2; }
     .pseudo-code { font-family: Consolas, monospace; font-size: .8rem; white-space: pre; padding: .5rem 0; overflow-x: auto; }
     .pseudo-line { padding: .1rem .75rem; min-height: 1.2em; }
@@ -36,7 +36,8 @@
     .dp-header-cell { background-color: var(--bs-secondary-bg-subtle) !important; color: var(--bs-emphasis-color) !important; }
     .mini-table td, .mini-table th { padding: .15rem .5rem; }
     .row-open > td { background-color: var(--bs-warning-bg-subtle) !important; }
-    .matrix-table { border-collapse: separate; border-spacing: 3px; }
+    .matrix-table { border-collapse: separate; border-spacing: 3px; margin: auto 0; flex: 0 0 auto; }
+    .matrix-table.compact td, .matrix-table.compact th { width: 2.8rem; height: 2.1rem; font-size: .9rem; }
     .matrix-table td, .matrix-table th { width: 3.4rem; height: 2.8rem; text-align: center; vertical-align: middle; border-radius: .35rem; font-size: 1.05rem; }
     .matrix-table td { border: 1px solid var(--bs-border-color); }
     .cell-region { background-color: var(--bs-primary-bg-subtle); border-color: var(--bs-primary-border-subtle) !important; }
@@ -67,8 +68,15 @@
       <span class="badge bg-info text-dark" v-if="currentStep" title="Llamadas a buscar() hasta ahora">Llamadas = {{ currentStep.calls }}</span>
       <span class="badge bg-warning text-dark" v-if="currentStep" :title="`Celdas comparadas con el objetivo, de ${cells} en total`">Celdas = {{ currentStep.examined }} / {{ cells }}</span>
       <span class="badge" :class="currentStep.result.found ? 'bg-success' : 'bg-danger'" v-if="currentStep && currentStep.result" title="Salida de buscarAgenteSmith">{{ currentStep.result.text }}</span>
+      <select class="form-select form-select-sm" style="width:auto" v-model="preset" @change="onPresetChange" title="Ejemplos con valores al azar">
+        <option value="" disabled>Ejemplos…</option>
+        <option value="consigna">Consigna (4×4)</option>
+        <option v-for="n in PRESET_SIZES" :key="n" :value="String(n)">{{ n }}×{{ n }} al azar</option>
+      </select>
+      <button class="btn btn-sm btn-outline-light" @click="regenerate" :disabled="!randomSize" title="Otra matriz al azar de la misma medida">🎲</button>
       <label class="text-light small mb-0" for="objetivo">Objetivo</label>
-      <input id="objetivo" type="number" class="form-control form-control-sm" style="width: 80px" v-model.number="objetivo" @change="onTargetChange" title="Código de Smith a buscar" />
+      <input id="objetivo" type="number" class="form-control form-control-sm" style="width: 80px" v-model.number="objetivo" @change="onTargetChange" title="Código de Smith a buscar (cualquier número)" />
+      <button class="btn btn-sm btn-outline-light" @click="pickTarget" title="Elegir como objetivo un valor al azar de la matriz">🎯</button>
       <div class="btn-group btn-group-sm">
         <button class="btn btn-outline-light" @click="restartAnimation" title="Reiniciar animación">⏮</button>
         <button class="btn btn-outline-light" @click="stepBackward" :disabled="currentStepIndex === 0" title="Paso anterior">⏪</button>
@@ -91,7 +99,7 @@
   <div class="main-row">
     <div class="left-col">
       <div class="matrix-wrap">
-        <table class="matrix-table" v-if="matrix.length">
+        <table class="matrix-table" :class="{ compact: matrix[0].length > 6 }" v-if="matrix.length">
           <thead>
             <tr>
               <th></th>
@@ -402,6 +410,26 @@ const DEFAULT_MATRIX_TEXT = '1 4 7 11\n2 5 8 12\n3 6 9 16\n10 13 14 17';
 const DEFAULT_TARGET = 5;
 // Tope para que la matriz entre cómoda en pantalla.
 const MAX_SIDE = 12;
+const PRESET_SIZES = [2, 4, 5, 10];
+
+// Matriz n×n al azar que cumple la consigna: valores distintos (entre 1 y 6·n²), cada fila y cada columna crecientes.
+// Los valores ordenados se reparten en un orden aleatorio que respeta el orden de filas y columnas:
+// en cada paso se elige al azar una fila que pueda seguir creciendo (su celda de arriba ya está llena).
+function randomMatrix(n) {
+  const total = n * n;
+  const pool = new Set();
+  while (pool.size < total) pool.add(1 + Math.floor(Math.random() * total * 6));
+  const values = [...pool].sort((a, b) => a - b);
+  const M = Array.from({ length: n }, () => Array(n).fill(0));
+  const filled = Array(n).fill(0);
+  for (const v of values) {
+    const options = [];
+    for (let i = 0; i < n; i++) if (filled[i] < n && (i === 0 || filled[i - 1] > filled[i])) options.push(i);
+    const i = options[Math.floor(Math.random() * options.length)];
+    M[i][filled[i]++] = v;
+  }
+  return M;
+}
 
 // Fórmula LaTeX → HTML, para v-html (renderToString: las celdas salen de un v-for, sin id ni nextTick).
 function tex(s) { return katex.renderToString(s, { throwOnError: false }); }
@@ -583,6 +611,8 @@ createApp({
     const speedMs = ref(800);
     let playTimer = null;
 
+    const preset = ref('consigna');
+    const randomSize = computed(() => /^\d+$/.test(preset.value) ? Number(preset.value) : 0);
     const showEditor = ref(false);
     const matrixDraft = ref(DEFAULT_MATRIX_TEXT);
     const matrixError = ref('');
@@ -688,8 +718,30 @@ createApp({
     function resetToDefault() {
       newConfirm.value = false;
       matrixError.value = '';
+      preset.value = 'consigna';
       applyState({ matrixText: DEFAULT_MATRIX_TEXT, objetivo: DEFAULT_TARGET });
       persist();
+    }
+
+    // ── Ejemplos al azar ──
+    function randomValue() {
+      const flat = matrix.value.flat();
+      return flat[Math.floor(Math.random() * flat.length)];
+    }
+    function loadRandom(n) {
+      const M = randomMatrix(n);
+      matrixError.value = '';
+      applyState({ matrixText: M.map(r => r.join(' ')).join('\n'), objetivo: M[Math.floor(Math.random() * n)][Math.floor(Math.random() * n)] });
+      persist();
+    }
+    function onPresetChange() {
+      if (preset.value === 'consigna') resetToDefault();
+      else loadRandom(Number(preset.value));
+    }
+    function regenerate() { if (randomSize.value) loadRandom(randomSize.value); }
+    function pickTarget() {
+      objetivo.value = randomValue();
+      onTargetChange();
     }
 
     // ── Editar la matriz y el objetivo ──
@@ -697,6 +749,7 @@ createApp({
       const { error } = parseMatrix(matrixDraft.value);
       matrixError.value = error || '';
       if (error) return;
+      preset.value = '';
       applyState({ matrixText: matrixDraft.value, objetivo: objetivo.value });
       persist();
     }
@@ -744,7 +797,7 @@ createApp({
     onBeforeUnmount(stopAutoplay);
 
     return {
-      PSEUDOCODE, JAVA_CODE, MAX_SIDE, complexity: COMPLEXITY, tex, texInline, rangeText,
+      PSEUDOCODE, JAVA_CODE, MAX_SIDE, PRESET_SIZES, preset, randomSize, onPresetChange, regenerate, pickTarget, complexity: COMPLEXITY, tex, texInline, rangeText,
       matrix, objetivo, tab, cells, cases, cellClass,
       steps, currentStepIndex, currentStep, isAtEnd,
       isPlaying, speedMs, togglePlay, stepForward, stepBackward, restartAnimation,
