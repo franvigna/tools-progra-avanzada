@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>La Cacería del Agente Smith</title>
+
+  <!-- Tema claro/oscuro: se fija ANTES de cargar el CSS para evitar parpadeo -->
+  <script>
+    (function () {
+      const stored = localStorage.getItem('theme');
+      const theme = stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-bs-theme', theme);
+    })();
+  </script>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.js"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #app { display: flex; flex-direction: column; height: 100vh; }
+    .main-row { flex: 1 1 auto; display: flex; min-height: 0; }
+    .left-col { flex: 2 1 0; display: flex; flex-direction: column; min-width: 0; }
+    .matrix-wrap { flex: 1 1 60%; position: relative; overflow: auto; padding: 1rem; display: flex; align-items: flex-start; justify-content: center; gap: 1rem; min-height: 0; }
+    .trace-wrap { flex: 1 1 40%; overflow: auto; border-top: 1px solid var(--bs-border-color); padding: .5rem; }
+    .code-panel { flex: 1 1 0; overflow-y: auto; border-left: 1px solid var(--bs-border-color); min-width: 300px; }
+    .footer-bar { flex: 0 0 auto; padding: .25rem 0; }
+    .stack-panel { flex: 0 0 230px; max-height: 100%; overflow-y: auto; }
+    .editor-panel { position: absolute; bottom: .75rem; left: .75rem; width: 300px; max-width: calc(100% - 1.5rem); z-index: 2; }
+    .pseudo-code { font-family: Consolas, monospace; font-size: .8rem; white-space: pre; padding: .5rem 0; overflow-x: auto; }
+    .pseudo-line { padding: .1rem .75rem; min-height: 1.2em; }
+    .pseudo-active { background: var(--bs-warning-bg-subtle); color: var(--bs-emphasis-color); font-weight: 600; }
+    .dp-header-cell { background-color: var(--bs-secondary-bg-subtle) !important; color: var(--bs-emphasis-color) !important; }
+    .mini-table td, .mini-table th { padding: .15rem .5rem; }
+    .row-open > td { background-color: var(--bs-warning-bg-subtle) !important; }
+    .matrix-table { border-collapse: separate; border-spacing: 3px; margin: auto 0; flex: 0 0 auto; }
+    .matrix-table.compact td, .matrix-table.compact th { width: 2.8rem; height: 2.1rem; font-size: .9rem; }
+    .matrix-table td, .matrix-table th { width: 3.4rem; height: 2.8rem; text-align: center; vertical-align: middle; border-radius: .35rem; font-size: 1.05rem; }
+    .matrix-table td { border: 1px solid var(--bs-border-color); }
+    .cell-region { background-color: var(--bs-primary-bg-subtle); border-color: var(--bs-primary-border-subtle) !important; }
+    .cell-discard { background-color: var(--bs-danger-bg-subtle); color: var(--bs-secondary-color); }
+    .cell-searched { background-color: var(--bs-secondary-bg-subtle); color: var(--bs-secondary-color); }
+    .cell-compared { outline: 2px dashed var(--bs-secondary-color); outline-offset: -2px; }
+    .cell-mid { background-color: var(--bs-warning-bg-subtle) !important; outline: 3px solid var(--bs-warning); outline-offset: -3px; font-weight: 700; color: var(--bs-emphasis-color); }
+    .cell-found { background-color: var(--bs-success-bg-subtle) !important; outline: 3px solid var(--bs-success); outline-offset: -3px; font-weight: 700; color: var(--bs-emphasis-color); }
+    .stack-frame-active { background-color: var(--bs-warning-bg-subtle); font-weight: 600; }
+    .theory p, .theory li { font-size: .875rem; }
+    .theory ul, .theory ol { padding-left: 1.2rem; }
+    summary.card-header { cursor: pointer; }
+    @media (max-width: 768px) {
+      #app { height: auto; }
+      .main-row { flex-direction: column; }
+      .matrix-wrap { flex: none; min-height: 320px; }
+      .code-panel { border-left: none; border-top: 1px solid var(--bs-border-color); }
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <nav class="navbar navbar-dark bg-dark px-3">
+    <a class="navbar-brand mb-0 h5" href="../index.html" title="Volver a todas las herramientas"><span class="opacity-75 me-1">←</span>🕶️ La Cacería del Agente Smith</a>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <span class="badge bg-secondary">Ejercicio · Reducir y conquistar · O(n)</span>
+      <span class="badge bg-info text-dark" v-if="currentStep" title="Llamadas a buscar() hasta ahora">Llamadas = {{ currentStep.calls }}</span>
+      <span class="badge bg-warning text-dark" v-if="currentStep" :title="`Celdas comparadas con el objetivo, de ${cells} en total`">Celdas = {{ currentStep.examined }} / {{ cells }}</span>
+      <span class="badge" :class="currentStep.result.found ? 'bg-success' : 'bg-danger'" v-if="currentStep && currentStep.result" title="Salida de buscarAgenteSmith">{{ currentStep.result.text }}</span>
+      <select class="form-select form-select-sm" style="width:auto" v-model="preset" @change="onPresetChange" title="Ejemplos con valores al azar">
+        <option value="" disabled>Ejemplos…</option>
+        <option value="consigna">Consigna (4×4)</option>
+        <option v-for="n in PRESET_SIZES" :key="n" :value="String(n)">{{ n }}×{{ n }} al azar</option>
+      </select>
+      <button class="btn btn-sm btn-outline-light" @click="regenerate" :disabled="!randomSize" title="Otra matriz al azar de la misma medida">🎲</button>
+      <label class="text-light small mb-0" for="objetivo">Objetivo</label>
+      <input id="objetivo" type="number" class="form-control form-control-sm" style="width: 80px" v-model.number="objetivo" @change="onTargetChange" title="Código de Smith a buscar (cualquier número)" />
+      <button class="btn btn-sm btn-outline-light" @click="pickTarget" title="Elegir como objetivo un valor al azar de la matriz">🎯</button>
+      <div class="btn-group btn-group-sm">
+        <button class="btn btn-outline-light" @click="restartAnimation" title="Reiniciar animación">⏮</button>
+        <button class="btn btn-outline-light" @click="stepBackward" :disabled="currentStepIndex === 0" title="Paso anterior">⏪</button>
+        <button class="btn btn-outline-light" @click="togglePlay" :title="isPlaying ? 'Pausar' : 'Reproducir'">{{ isPlaying ? '⏸️' : '▶️' }}</button>
+        <button class="btn btn-outline-light" @click="stepForward" :disabled="isAtEnd" title="Paso siguiente">⏩</button>
+      </div>
+      <input type="range" class="form-range" style="width:80px" min="150" max="2000" step="50"
+        v-model.number="speedMs" title="Velocidad de reproducción" />
+      <button class="btn btn-sm" :class="showEditor ? 'btn-light' : 'btn-outline-light'" @click="showEditor = !showEditor" title="Editar la matriz">✏️ Editar matriz</button>
+      <button class="btn btn-sm" :class="newConfirm ? 'btn-warning text-dark' : 'btn-outline-light'" @click="handleNewClick" title="Volver al ejemplo de la consigna">
+        {{ newConfirm ? '¿Seguro?' : '🆕 Nuevo' }}
+      </button>
+      <button class="btn btn-sm btn-outline-light" @click="shareCurrentState" title="Copiar un link para compartir esta matriz">
+        {{ shareCopied ? '✅ Copiado' : '🔗 Compartir' }}
+      </button>
+      <button class="btn btn-sm btn-outline-light" @click="toggleTheme" :title="isDark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'">{{ isDark ? '☀️' : '🌙' }}</button>
+    </div>
+  </nav>
+
+  <div class="main-row">
+    <div class="left-col">
+      <div class="matrix-wrap">
+        <table class="matrix-table" :class="{ compact: matrix[0].length > 6 }" v-if="matrix.length">
+          <thead>
+            <tr>
+              <th></th>
+              <th class="dp-header-cell text-muted" v-for="(_, j) in matrix[0]" :key="j"><small>j={{ j }}</small></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(row, i) in matrix" :key="i">
+              <th class="dp-header-cell text-muted"><small>i={{ i }}</small></th>
+              <td v-for="(v, j) in row" :key="j" :class="cellClass(i, j)">{{ v }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="card shadow-sm stack-panel" v-if="currentStep">
+          <div class="card-header py-1 px-2 small fw-semibold">📚 Pila de llamadas</div>
+          <ul class="list-group list-group-flush small">
+            <li class="list-group-item py-1 px-2 text-muted" v-if="!currentStep.stack.length">(vacía)</li>
+            <li class="list-group-item py-1 px-2" v-for="(f, idx) in currentStep.stack" :key="idx"
+              :class="{ 'stack-frame-active': idx === currentStep.stack.length - 1 }"
+              :style="{ paddingLeft: (0.5 + idx * 0.6) + 'rem !important' }">
+              <div>{{ f.label }}</div>
+              <div class="text-muted">{{ rangeText(f.r) }}</div>
+            </li>
+          </ul>
+        </div>
+
+        <div class="card shadow-sm editor-panel" v-if="showEditor">
+          <div class="card-body p-2">
+            <label class="form-label small text-muted mb-1">
+              Una fila por línea, números separados por espacios. Cada fila y cada columna deben crecer (sin repetidos). Hasta {{ MAX_SIDE }}×{{ MAX_SIDE }}.
+            </label>
+            <textarea class="form-control form-control-sm mb-2" rows="7" v-model="matrixDraft" style="font-family: monospace"></textarea>
+            <div class="alert alert-danger small py-1 px-2 mb-2" v-if="matrixError">{{ matrixError }}</div>
+            <button class="btn btn-dark btn-sm w-100" @click="applyMatrix">▶ Aplicar</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="trace-wrap" v-if="currentStep">
+        <div class="card">
+          <div class="card-header py-1 px-2 small fw-semibold">📋 Seguimiento por llamada (cada una que mira una celda)</div>
+          <div class="card-body p-2" style="overflow-x: auto;">
+            <p class="text-muted small text-center my-2" v-if="!currentStep.rows.length">La primera fila aparece cuando se mira la primera esquina.</p>
+            <table class="table table-sm table-bordered text-center align-middle mb-0 small" v-else>
+              <thead>
+                <tr>
+                  <th class="dp-header-cell" title="Número de llamada">Llamada</th>
+                  <th class="dp-header-cell" title="Subregión sobre la que trabaja">Región</th>
+                  <th class="dp-header-cell" title="Celda de la esquina superior derecha de la región">Esquina</th>
+                  <th class="dp-header-cell" title="Valor de la celda central">Valor</th>
+                  <th class="dp-header-cell" title="Comparación del objetivo con el valor">objetivo vs valor</th>
+                  <th class="dp-header-cell" title="Qué se descarta">Descarta</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(r, idx) in currentStep.rows" :key="idx" :class="{ 'row-open': currentStep.openRow && idx === currentStep.rows.length - 1 }">
+                  <td>{{ r.n }}</td>
+                  <td class="text-start">{{ r.label }}<span class="text-muted"> · {{ r.region }}</span></td>
+                  <td>[{{ r.f }}][{{ r.c }}]</td>
+                  <td class="fw-semibold">{{ r.value }}</td>
+                  <td>{{ r.verdict ? `${objetivo} ${r.verdict} ${r.value}` : '—' }}</td>
+                  <td class="text-start">{{ r.discard || '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="code-panel">
+      <ul class="nav nav-tabs px-3 pt-2">
+        <li class="nav-item"><button class="nav-link" :class="{ active: tab === 'pasos' }" @click="tab = 'pasos'">▶ Paso a paso</button></li>
+        <li class="nav-item"><button class="nav-link" :class="{ active: tab === 'teoria' }" @click="tab = 'teoria'">📖 Resolución</button></li>
+      </ul>
+
+      <div class="p-3" v-show="tab === 'pasos'">
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">💻 Pseudocódigo</div>
+          <div class="card-body p-0">
+            <div class="pseudo-code">
+              <div v-for="(line, idx) in PSEUDOCODE" :key="idx" class="pseudo-line"
+                :class="{ 'pseudo-active': currentStep && currentStep.activeLines.includes(idx) }">{{ line }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">🔍 Explicación</div>
+          <div class="card-body">
+            <p class="text-muted text-center py-3 mb-0" v-if="!currentStep">Cargá una matriz y presioná ▶️ o "Paso siguiente" para empezar.</p>
+            <div v-else>
+              <span class="badge fs-6 text-wrap text-start" :class="currentStep.badge.cls">{{ currentStep.badge.icon }} {{ currentStep.badge.text }}</span>
+            </div>
+            <p class="small text-muted mt-3 mb-0" v-if="currentStep">Paso {{ currentStepIndex + 1 }} de {{ steps.length }}</p>
+          </div>
+        </div>
+
+        <div class="card mb-3" v-if="isAtEnd && currentStep && currentStep.result">
+          <div class="card-header fw-semibold">🎯 Respuesta</div>
+          <div class="card-body small">
+            <p class="mb-1">Salida: <b>{{ currentStep.result.text }}</b></p>
+            <p class="mb-0">Se compararon <b>{{ currentStep.examined }}</b> celdas de {{ cells }} ({{ currentStep.calls }} llamadas a <code>buscar</code>). Mirar todas sería O(n²) = {{ cells }}.</p>
+          </div>
+        </div>
+
+        <details class="card mb-3">
+          <summary class="card-header fw-semibold">⏱️ Complejidad: <span v-html="tex(complexity.total)"></span></summary>
+          <div class="card-body p-2" style="overflow-x: auto;">
+            <table class="table table-sm table-bordered align-middle mb-2 small">
+              <thead><tr><th v-for="h in complexity.headers" :key="h" class="dp-header-cell">{{ h }}</th></tr></thead>
+              <tbody>
+                <tr v-for="(r, idx) in complexity.rows" :key="idx">
+                  <td class="font-monospace">{{ r[0] }}</td>
+                  <td v-for="(c, k) in r.slice(1)" :key="k" :class="{ 'text-nowrap': k === r.length - 2 }" v-html="tex(c)"></td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="small mb-0" v-html="texInline(complexity.note)"></p>
+          </div>
+        </details>
+
+        <div class="card">
+          <div class="card-header fw-semibold">Leyenda</div>
+          <ul class="list-group list-group-flush small">
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-primary-subtle text-primary-emphasis border">&nbsp;&nbsp;</span> Región en la que se está buscando</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-warning-subtle text-warning-emphasis border border-warning">&nbsp;&nbsp;</span> Celda que se compara con el objetivo (la esquina superior derecha de la región)</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-danger-subtle text-danger-emphasis border">&nbsp;&nbsp;</span> Fila o columna descartada por el orden de filas y columnas</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-secondary-subtle text-secondary-emphasis border">&nbsp;&nbsp;</span> Región ya recorrida sin encontrarlo</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge border text-body">- - -</span> Celda que ya se comparó con el objetivo</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge bg-success">&nbsp;&nbsp;</span> Smith encontrado</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="p-3 theory" v-show="tab === 'teoria'">
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">📖 Enunciado, en breve</div>
+          <div class="card-body">
+            <p>Los registros de la Matrix son una matriz de enteros <b>sin repetidos</b> donde cada fila crece de izquierda a derecha y cada columna de arriba hacia abajo. Hay que ubicar el código de Smith con un algoritmo de <b>división y conquista recursivo</b>, mejor que O(n²), y devolver <code>[fila, columna]</code>, o <code>[-1, -1]</code> si no está.</p>
+            <p class="mb-0 small text-muted">Ejemplo: con la matriz de la consigna y objetivo 5, la salida es <code>[1, 1]</code>. Probá cambiar el objetivo (arriba) a 14 o a 15, que no está.</p>
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">1 · La idea: una esquina que descarta una fila o una columna</div>
+          <div class="card-body">
+            <ul class="mb-0">
+              <li>Se mira la esquina <b>superior derecha</b> de la región: es la mayor de su fila y la menor de su columna. Primero se revisa la última columna, y de ahí se va hacia la izquierda y hacia abajo, como una escalera.</li>
+              <li>Si <b>esquina &lt; objetivo</b>: todo lo que está a la izquierda en su fila es menor que ella, así que no puede ser el objetivo. Se descarta esa <b>fila</b> y se baja: <code>f + 1</code>.</li>
+              <li>Si <b>esquina &gt; objetivo</b>: todo lo que está abajo en su columna es mayor, así que se descarta esa <b>columna</b> y se va a la izquierda: <code>c - 1</code>.</li>
+              <li>Si es igual, se devuelve la posición. Si se acaban las filas o las columnas, <code>[-1, -1]</code>. Cada paso es <b>una sola llamada recursiva</b> sobre una matriz una fila o una columna más chica.</li>
+              <li><b>Ojo:</b> técnicamente es "reducir y conquistar" (decrease and conquer): un solo subproblema apenas más chico, en vez de varios de tamaño n/2. Cumple "recursivo" y "mejor que O(n²)".</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">2 · Pseudocódigo y solución en Java</div>
+          <div class="card-body p-0">
+            <div class="pseudo-code">
+              <div v-for="(line, idx) in PSEUDOCODE" :key="idx" class="pseudo-line">{{ line }}</div>
+            </div>
+          </div>
+          <div class="card-footer p-0">
+            <details>
+              <summary class="px-3 py-2 small fw-semibold" style="cursor: pointer;">☕ Neo.java (misma interfaz de la plantilla)</summary>
+              <pre class="small mb-0 p-3 border-top" style="overflow-x: auto;"><code>{{ JAVA_CODE }}</code></pre>
+            </details>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header fw-semibold">3 · Complejidad</div>
+          <div class="card-body">
+            <ul>
+              <li>Cada llamada hace trabajo constante y descarta una fila o una columna: como mucho <code>2n − 1</code> llamadas, o sea <code>T(n) = T(n − 1) + O(1) = O(n)</code> (O(n + m) en una de n × m).</li>
+              <li>Es <b>mejor que O(n²)</b>: con n = 1000 son unas 2000 comparaciones contra 1 000 000 de celdas.</li>
+              <li><b>Mejor caso</b> O(1) (el objetivo está en la esquina superior derecha). <b>Espacio</b>: O(n) de pila de recursión (con un bucle serían O(1)); con matrices enormes la recursión podría desbordar la pila.</li>
+            </ul>
+            <p class="mb-1"><b>Cuánto trabaja con la matriz actual</b> (celdas comparadas, de {{ cells }}):</p>
+            <table class="table table-sm table-bordered text-center mb-0 mini-table small" style="width: auto;">
+              <thead><tr><th class="dp-header-cell">Objetivo</th><th class="dp-header-cell">Salida</th><th class="dp-header-cell">Celdas</th><th class="dp-header-cell">Llamadas</th></tr></thead>
+              <tbody>
+                <tr v-for="c in cases" :key="c.target">
+                  <td>{{ c.target }}<span class="text-muted" v-if="c.note"> ({{ c.note }})</span></td>
+                  <td>{{ c.text }}</td>
+                  <td>{{ c.examined }}</td>
+                  <td>{{ c.calls }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-bar text-center small border-top">
+    <p> Hecho con ❤️ por <a href="https://github.com/programacion-avanzada">Programación Avanzada</a> (y <a href="https://claude.ai">Claude</a>)</p>
+  </div>
+
+</div>
+
+<script>
+const { createApp, ref, computed, nextTick, onMounted, onBeforeUnmount } = Vue;
+
+// Matriz de la consigna. Con objetivo 5 la escalera la recorre así: 11 → 7 → 4 → 5.
+const DEFAULT_MATRIX_TEXT = '1 4 7 11\n2 5 8 12\n3 6 9 16\n10 13 14 17';
+const DEFAULT_TARGET = 5;
+// Tope para que la matriz entre cómoda en pantalla.
+const MAX_SIDE = 12;
+const PRESET_SIZES = [2, 4, 5, 10];
+
+// Matriz n×n al azar que cumple la consigna: valores distintos (entre 1 y 6·n²), cada fila y cada columna crecientes.
+// Los valores ordenados se reparten en un orden aleatorio que respeta el orden de filas y columnas:
+// en cada paso se elige al azar una fila que pueda seguir creciendo (su celda de arriba ya está llena).
+function randomMatrix(n) {
+  const total = n * n;
+  const pool = new Set();
+  while (pool.size < total) pool.add(1 + Math.floor(Math.random() * total * 6));
+  const values = [...pool].sort((a, b) => a - b);
+  const M = Array.from({ length: n }, () => Array(n).fill(0));
+  const filled = Array(n).fill(0);
+  for (const v of values) {
+    const options = [];
+    for (let i = 0; i < n; i++) if (filled[i] < n && (i === 0 || filled[i - 1] > filled[i])) options.push(i);
+    const i = options[Math.floor(Math.random() * options.length)];
+    M[i][filled[i]++] = v;
+  }
+  return M;
+}
+
+// Fórmula LaTeX → HTML, para v-html (renderToString: las celdas salen de un v-for, sin id ni nextTick).
+function tex(s) { return katex.renderToString(s, { throwOnError: false }); }
+// Texto con fórmulas entre $…$: los tramos impares son LaTeX, el resto texto plano (escapado).
+function texInline(s) {
+  return s.split('$').map((t, i) => i % 2 ? tex(t) : t.replace(/&/g, '&amp;').replace(/</g, '&lt;')).join('');
+}
+// ── Parseo de la matriz: una fila por línea. Cada fila y cada columna deben crecer (sin repetidos).
+function parseMatrix(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  if (!lines.length) return { error: 'Escribí al menos una fila.' };
+  const m = lines.map(l => l.split(/[\s,]+/).filter(Boolean).map(Number));
+  if (m.some(row => row.some(x => !Number.isInteger(x)))) return { error: 'Solo se admiten números enteros.' };
+  const cols = m[0].length;
+  if (m.some(row => row.length !== cols)) return { error: 'Todas las filas deben tener la misma cantidad de números.' };
+  if (m.length > MAX_SIDE || cols > MAX_SIDE) return { error: `Máximo ${MAX_SIDE}×${MAX_SIDE} para que entre en pantalla.` };
+  for (let i = 0; i < m.length; i++) {
+    for (let j = 0; j < cols; j++) {
+      if (j > 0 && m[i][j] <= m[i][j - 1]) return { error: `La fila ${i} no crece estrictamente en la columna ${j}.` };
+      if (i > 0 && m[i][j] <= m[i - 1][j]) return { error: `La columna ${j} no crece estrictamente en la fila ${i}.` };
+    }
+  }
+  return { matrix: m };
+}
+
+function rangeText(r) {
+  return `filas ${r.fi}–${r.ff}, columnas ${r.ci}–${r.cf}`;
+}
+
+// ── Escalera (reducir y conquistar): una sola subllamada, que descarta una fila o una columna.
+const PSEUDOCODE = [
+  'ALGORITMO buscar(M, objetivo, f, c)    // se llama con f = 0, c = columnas-1',
+  '    SI f ≥ filas O c < 0 ENTONCES',
+  '        RETORNAR [-1, -1]',
+  '    SI M[f][c] = objetivo ENTONCES RETORNAR [f, c]',
+  '    SI M[f][c] < objetivo ENTONCES',
+  '        // se descarta la fila f (todo lo de la izquierda es menor)',
+  '        RETORNAR buscar(M, objetivo, f + 1, c)',
+  '    SINO',
+  '        // se descarta la columna c (todo lo de abajo es mayor)',
+  '        RETORNAR buscar(M, objetivo, f, c - 1)',
+];
+
+// Solución del ejercicio, con la interfaz exacta de la plantilla (paquete pa.matrix, clase Neo).
+const JAVA_CODE = `package pa.matrix;
+
+/**
+ * Neo debe localizar al Agente Smith en los registros de la Matrix. Los datos
+ * están organizados en una matriz de enteros sin elementos repetidos, donde
+ * cada fila está ordenada de menor a mayor, y cada columna también está
+ * ordenada de menor a mayor.
+ *
+ * Esta clase implementa un algoritmo de división y conquista recursivo para
+ * buscar un valor objetivo en una matriz N×N ordenada por filas y columnas en
+ * tiempo menor a O(n^2).
+ *
+ * @author COMPLETAR
+ * @version 1.0
+ */
+public class Neo {
+
+    /**
+     * Busca al Agente Smith en la matriz de datos de Matrix usando divide y
+     * vencerás recursivo. La matriz debe estar ordenada: cada fila creciente y cada
+     * columna creciente.
+     *
+     * @param matrizDatos matriz ordenada que representa los registros de Matrix
+     * @param codigoSmith código único del Agente Smith a buscar
+     * @return array de 2 posiciones [fila, columna] donde está Smith, o [-1, -1] si
+     *         no se encuentra
+     */
+    public int[] buscarAgenteSmith(int[][] matrizDatos, int codigoSmith) {
+        if (matrizDatos == null || matrizDatos.length == 0 || matrizDatos[0].length == 0) {
+            return new int[] { -1, -1 };
+        }
+        return buscar(matrizDatos, codigoSmith, 0, matrizDatos[0].length - 1);
+    }
+
+    private int[] buscar(int[][] m, int objetivo, int f, int c) {
+        if (f >= m.length || c < 0) {
+            return new int[] { -1, -1 };
+        }
+        if (m[f][c] == objetivo) {
+            return new int[] { f, c };
+        }
+        if (m[f][c] < objetivo) {
+            return buscar(m, objetivo, f + 1, c); // se descarta la fila f
+        }
+        return buscar(m, objetivo, f, c - 1); // se descarta la columna c
+    }
+}
+`;
+
+// Explicación de la complejidad (card desplegable): cada fila es [línea del pseudocódigo, veces que se ejecuta, costo total]; veces, costo y total en LaTeX.
+const COMPLEXITY = {
+  total: "O(n)",
+  headers: ["Línea", "Veces", "Costo"],
+  rows: [
+    ["SI f ≥ filas O c < 0: RETORNAR [-1, -1]", "\\le 2n", "O(n)"],
+    ["SI M[f][c] = objetivo: RETORNAR [f, c]", "\\le 2n - 1", "O(n)"],
+    ["SI M[f][c] < objetivo: buscar(f + 1, c), SINO buscar(f, c - 1)", "\\le 2n - 1", "O(n)"],
+  ],
+  note: "Cada llamada descarta una fila o una columna, así que en una matriz de $n \\times n$ hay a lo sumo $2n - 1$ llamadas con trabajo constante: $T(n) = T(n-1) + O(1)$ si se cuenta el lado, es decir $O(n)$ ($O(n + m)$ en una de $n \\times m$). Mejor caso: $O(1)$. La pila de recursión llega a $O(n)$ (iterativo serían $O(1)$ de memoria). Es \"reducir y conquistar\": un solo subproblema un poco más chico, en vez de varios de tamaño $n/2$.",
+};
+
+// ── Corre el algoritmo una sola vez y empuja un snapshot por cada punto de parada didáctico.
+function computeSteps(M, objetivo) {
+  const steps = [];
+  if (!M.length) return steps;
+  const nRows = M.length, cols = M[0].length;
+  const stack = [];
+  const eliminated = [];
+  const compared = [];
+  const rows = [];
+  let found = null, openRow = false, calls = 0, examined = 0, result = null;
+
+  function snapshot(activeLines, badge) {
+    const top = stack.length ? stack[stack.length - 1] : null;
+    steps.push({
+      activeLines,
+      stack: stack.map(f => ({ label: f.label, r: { ...f.r } })),
+      region: top ? { ...top.r } : null,
+      mid: top && top.mid ? { ...top.mid } : null,
+      eliminated: eliminated.map(e => ({ kind: e.kind, r: { ...e.r } })),
+      compared: compared.map(c => [...c]),
+      found: found && { ...found },
+      rows: rows.map(r => ({ ...r })),
+      openRow, calls, examined, result,
+      badge,
+    });
+  }
+
+  // Devuelve [fila, columna] o null. La región es lo que queda: filas f..última, columnas 0..c.
+  function buscar(f, c) {
+    calls++;
+    const r = { fi: f, ci: 0, ff: nRows - 1, cf: c };
+    const frame = { label: `buscar(f = ${f}, c = ${c})`, r, mid: null };
+    stack.push(frame);
+    snapshot([0], { icon: '📞', text: `buscar(f = ${f}, c = ${c}): queda la región ${rangeText(r)}.`, cls: 'bg-secondary' });
+    if (f >= nRows || c < 0) {
+      snapshot([1, 2], { icon: '∅', text: `${f >= nRows ? 'Se acabaron las filas (f ≥ filas)' : 'Se acabaron las columnas (c < 0)'}: no queda nada por mirar. Se devuelve [-1, -1].`, cls: 'bg-danger' });
+      stack.pop();
+      return null;
+    }
+
+    const v = M[f][c];
+    frame.mid = { f, c };
+    examined++;
+    compared.push([f, c]);
+    const row = { n: calls, label: `f = ${f}, c = ${c}`, region: `${f}–${nRows - 1} × 0–${c}`, f, c, value: v, verdict: '', discard: '' };
+    rows.push(row);
+    openRow = true;
+    snapshot([3], {
+      icon: '🎯',
+      text: `Se mira la esquina superior derecha de la región: M[${f}][${c}] = ${v}. Es la mayor de su fila y la menor de su columna (dentro de la región).`,
+      cls: 'bg-warning text-dark',
+    });
+
+    if (v === objetivo) {
+      found = { f, c };
+      row.verdict = '=';
+      snapshot([3], { icon: '🏆', text: `M[${f}][${c}] = ${v} es el objetivo: se devuelve [${f}, ${c}].`, cls: 'bg-success' });
+      openRow = false;
+      stack.pop();
+      return [f, c];
+    }
+
+    if (v < objetivo) {
+      row.verdict = '<';
+      row.discard = `fila ${f}`;
+      eliminated.push({ kind: 'discard', r: { fi: f, ci: 0, ff: f, cf: c } });
+      snapshot([4, 5, 6], {
+        icon: '⬇️',
+        text: `${v} < ${objetivo}: todo lo que está a la izquierda de M[${f}][${c}] en su fila es menor que ${v}, así que no es el objetivo. Se descarta la fila ${f} y se sigue con f + 1.`,
+        cls: 'bg-primary',
+      });
+      openRow = false;
+      const res = buscar(f + 1, c);
+      stack.pop();
+      return res;
+    }
+    row.verdict = '>';
+    row.discard = `columna ${c}`;
+    eliminated.push({ kind: 'discard', r: { fi: f, ci: c, ff: nRows - 1, cf: c } });
+    snapshot([7, 8, 9], {
+      icon: '⬅️',
+      text: `${v} > ${objetivo}: todo lo que está abajo de M[${f}][${c}] en su columna es mayor que ${v}, así que no es el objetivo. Se descarta la columna ${c} y se sigue con c - 1.`,
+      cls: 'bg-primary',
+    });
+    openRow = false;
+    const res = buscar(f, c - 1);
+    stack.pop();
+    return res;
+  }
+
+  const res = buscar(0, cols - 1);
+  const total = nRows * cols;
+  result = res ? { found: true, text: `[${res[0]}, ${res[1]}]` } : { found: false, text: '[-1, -1]' };
+  snapshot(res ? [3] : [2], {
+    icon: '🏁',
+    text: res
+      ? `Smith está en [${res[0]}, ${res[1]}]. Se compararon ${examined} celdas de ${total}.`
+      : `Smith no está en la matriz: [-1, -1]. Se compararon ${examined} celdas de ${total}.`,
+    cls: res ? 'bg-success' : 'bg-danger',
+  });
+  return steps;
+}
+
+createApp({
+  setup() {
+    const STORAGE_KEY = 'pa-tools-ejercicios-caceria-del-agente-smith';
+
+    const matrix = ref([]);
+    const objetivo = ref(DEFAULT_TARGET);
+    const tab = ref('pasos');
+
+    const steps = ref([]);
+    const currentStepIndex = ref(0);
+    const isPlaying = ref(false);
+    const speedMs = ref(800);
+    let playTimer = null;
+
+    const preset = ref('consigna');
+    const randomSize = computed(() => /^\d+$/.test(preset.value) ? Number(preset.value) : 0);
+    const showEditor = ref(false);
+    const matrixDraft = ref(DEFAULT_MATRIX_TEXT);
+    const matrixError = ref('');
+
+    const isDark = ref(document.documentElement.getAttribute('data-bs-theme') === 'dark');
+
+    const currentStep = computed(() => steps.value[currentStepIndex.value] || null);
+    const isAtEnd = computed(() => currentStepIndex.value >= steps.value.length - 1);
+    const cells = computed(() => matrix.value.length * (matrix.value[0] ? matrix.value[0].length : 0));
+
+    // Corrida completa para algunos objetivos de ejemplo, con la matriz actual.
+    const cases = computed(() => {
+      const m = matrix.value;
+      if (!m.length) return [];
+      const n = m.length, k = m[0].length;
+      const picks = [
+        [m[n >> 1][k >> 1], 'la celda central'],
+        [m[0][0], 'esquina arriba-izquierda'],
+        [m[n - 1][k - 1], 'esquina abajo-derecha'],
+        [m[n - 1][0], 'esquina abajo-izquierda'],
+        [m[n - 1][k - 1] + 1, 'no está'],
+      ];
+      const seen = new Set();
+      return picks.filter(([t]) => !seen.has(t) && seen.add(t)).map(([t, note]) => {
+        const last = computeSteps(m, t).slice(-1)[0];
+        return { target: t, note, text: last.result.text, examined: last.examined, calls: last.calls };
+      });
+    });
+
+    // Una celda tiene un solo rol visible, por prioridad: encontrada > esquina > eliminada > región actual.
+    function cellClass(i, j) {
+      const s = currentStep.value;
+      if (!s) return '';
+      const cls = [];
+      const inRect = r => i >= r.fi && i <= r.ff && j >= r.ci && j <= r.cf;
+      if (s.found && s.found.f === i && s.found.c === j) cls.push('cell-found');
+      else if (s.mid && s.mid.f === i && s.mid.c === j) cls.push('cell-mid');
+      else if (s.eliminated.some(e => e.kind === 'discard' && inRect(e.r))) cls.push('cell-discard');
+      else if (s.eliminated.some(e => e.kind === 'searched' && inRect(e.r))) cls.push('cell-searched');
+      else if (s.region && inRect(s.region)) cls.push('cell-region');
+      if (s.compared.some(c => c[0] === i && c[1] === j)) cls.push('cell-compared');
+      return cls;
+    }
+
+    // ── Persistencia ──
+    function currentState() {
+      return { matrixText: matrixDraft.value, objetivo: objetivo.value };
+    }
+    function applyState(data) {
+      const text = data.matrixText ?? matrixDraft.value;
+      const parsed = parseMatrix(text);
+      if (parsed.error) throw new Error(parsed.error);
+      matrixDraft.value = text;
+      matrix.value = parsed.matrix;
+      objetivo.value = Number.isInteger(data.objetivo) ? data.objetivo : objetivo.value;
+      regenerateSteps();
+    }
+    function persist() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(currentState()));
+    }
+    function loadFromStorage() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) { resetToDefault(); return; }
+        applyState(JSON.parse(raw));
+      } catch (e) { resetToDefault(); }
+    }
+
+    // ── Compartir por URL (#d=...) ──
+    function encodeState(data) { return encodeURIComponent(JSON.stringify(data)); }
+    function decodeState(str) { return JSON.parse(decodeURIComponent(str)); }
+
+    function loadInitialState() {
+      if (location.hash.startsWith('#d=')) {
+        try {
+          applyState(decodeState(location.hash.slice(3)));
+          history.replaceState(null, '', location.pathname + location.search);
+          persist();
+          return;
+        } catch (e) { console.error('No se pudo leer la matriz de la URL:', e); }
+      }
+      loadFromStorage();
+    }
+
+    const shareCopied = ref(false);
+    function shareCurrentState() {
+      const url = `${location.origin}${location.pathname}#d=${encodeState(currentState())}`;
+      const onCopied = () => { shareCopied.value = true; setTimeout(() => { shareCopied.value = false; }, 2000); };
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(url).then(onCopied).catch(() => window.prompt('Copiá el link:', url));
+      } else {
+        window.prompt('Copiá el link:', url);
+      }
+    }
+
+    // ── "Nuevo" (2 pasos) ──
+    const newConfirm = ref(false);
+    function handleNewClick() {
+      if (newConfirm.value) { resetToDefault(); return; }
+      newConfirm.value = true;
+      setTimeout(() => { newConfirm.value = false; }, 3000);
+    }
+    function resetToDefault() {
+      newConfirm.value = false;
+      matrixError.value = '';
+      preset.value = 'consigna';
+      applyState({ matrixText: DEFAULT_MATRIX_TEXT, objetivo: DEFAULT_TARGET });
+      persist();
+    }
+
+    // ── Ejemplos al azar ──
+    function randomValue() {
+      const flat = matrix.value.flat();
+      return flat[Math.floor(Math.random() * flat.length)];
+    }
+    function loadRandom(n) {
+      const M = randomMatrix(n);
+      matrixError.value = '';
+      applyState({ matrixText: M.map(r => r.join(' ')).join('\n'), objetivo: M[Math.floor(Math.random() * n)][Math.floor(Math.random() * n)] });
+      persist();
+    }
+    function onPresetChange() {
+      if (preset.value === 'consigna') resetToDefault();
+      else loadRandom(Number(preset.value));
+    }
+    function regenerate() { if (randomSize.value) loadRandom(randomSize.value); }
+    function pickTarget() {
+      objetivo.value = randomValue();
+      onTargetChange();
+    }
+
+    // ── Editar la matriz y el objetivo ──
+    function applyMatrix() {
+      const { error } = parseMatrix(matrixDraft.value);
+      matrixError.value = error || '';
+      if (error) return;
+      preset.value = '';
+      applyState({ matrixText: matrixDraft.value, objetivo: objetivo.value });
+      persist();
+    }
+    function onTargetChange() {
+      if (!Number.isInteger(objetivo.value)) objetivo.value = DEFAULT_TARGET;
+      regenerateSteps();
+      persist();
+    }
+
+    // ── Reproducción ──
+    function regenerateSteps() {
+      steps.value = computeSteps(matrix.value, objetivo.value);
+      currentStepIndex.value = 0;
+      stopAutoplay();
+    }
+    function goToStep(i) {
+      currentStepIndex.value = Math.max(0, Math.min(steps.value.length - 1, i));
+    }
+    function stepForward() { if (!isAtEnd.value) goToStep(currentStepIndex.value + 1); else stopAutoplay(); }
+    function stepBackward() { goToStep(currentStepIndex.value - 1); }
+    function restartAnimation() { stopAutoplay(); goToStep(0); }
+    function stopAutoplay() {
+      isPlaying.value = false;
+      if (playTimer) { clearInterval(playTimer); playTimer = null; }
+    }
+    function togglePlay() {
+      if (isPlaying.value) { stopAutoplay(); return; }
+      if (isAtEnd.value) goToStep(0);
+      isPlaying.value = true;
+      playTimer = setInterval(() => {
+        if (isAtEnd.value) { stopAutoplay(); return; }
+        stepForward();
+      }, speedMs.value);
+    }
+
+    // ── Tema claro/oscuro ──
+    function toggleTheme() {
+      isDark.value = !isDark.value;
+      const theme = isDark.value ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-bs-theme', theme);
+      localStorage.setItem('theme', theme);
+    }
+
+    onMounted(loadInitialState);
+    onBeforeUnmount(stopAutoplay);
+
+    return {
+      PSEUDOCODE, JAVA_CODE, complexity: COMPLEXITY, MAX_SIDE, PRESET_SIZES, preset, randomSize, onPresetChange, regenerate, pickTarget, tex, texInline, rangeText,
+      matrix, objetivo, tab, cells, cases, cellClass,
+      steps, currentStepIndex, currentStep, isAtEnd,
+      isPlaying, speedMs, togglePlay, stepForward, stepBackward, restartAnimation,
+      showEditor, matrixDraft, matrixError, applyMatrix, onTargetChange,
+      newConfirm, handleNewClick, shareCopied, shareCurrentState,
+      isDark, toggleTheme,
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

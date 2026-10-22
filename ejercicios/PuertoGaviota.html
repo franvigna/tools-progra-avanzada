@@ -15,6 +15,8 @@
   </script>
 
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.js"></script>
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
 
   <style>
@@ -55,16 +57,14 @@
       .data-panel { max-width: none; flex-wrap: wrap; border-left: none; border-top: 1px solid var(--bs-border-color); }
       .code-panel { border-left: none; border-top: 1px solid var(--bs-border-color); }
     }
+    summary.card-header { cursor: pointer; }
   </style>
 </head>
 <body>
 <div id="app">
 
   <nav class="navbar navbar-dark bg-dark px-3">
-    <div class="d-flex align-items-center gap-2">
-      <a href="../index.html" class="btn btn-sm btn-outline-light" title="Volver al inicio">←</a>
-      <span class="navbar-brand mb-0 h5">🚇 Puerto Gaviota: el metro</span>
-    </div>
+    <a class="navbar-brand mb-0 h5" href="../index.html" title="Volver a todas las herramientas"><span class="opacity-75 me-1">←</span>🚇 Puerto Gaviota: el metro</a>
     <div class="d-flex align-items-center gap-2 flex-wrap">
       <span class="badge bg-secondary">Ejercicio · MST · O((N+K+M)·α(N))</span>
       <span class="badge bg-info text-dark" v-if="currentStep" title="Subárboles (componentes conexas) que quedan por unir">Componentes = {{ currentStep.comps }}</span>
@@ -245,6 +245,22 @@
             <p class="small text-muted mt-3 mb-0" v-if="currentStep">Paso {{ currentStepIndex + 1 }} de {{ steps.length }}</p>
           </div>
         </div>
+
+        <details class="card mb-3">
+          <summary class="card-header fw-semibold">⏱️ Complejidad: <span v-html="tex(complexity.total)"></span></summary>
+          <div class="card-body p-2" style="overflow-x: auto;">
+            <table class="table table-sm table-bordered align-middle mb-2 small">
+              <thead><tr><th v-for="h in complexity.headers" :key="h" class="dp-header-cell">{{ h }}</th></tr></thead>
+              <tbody>
+                <tr v-for="(r, idx) in complexity.rows" :key="idx">
+                  <td class="font-monospace">{{ r[0] }}</td>
+                  <td v-for="(c, k) in r.slice(1)" :key="k" :class="{ 'text-nowrap': k === r.length - 2 }" v-html="tex(c)"></td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="small mb-0" v-html="texInline(complexity.note)"></p>
+          </div>
+        </details>
 
         <div class="card">
           <div class="card-header fw-semibold">Leyenda</div>
@@ -612,6 +628,28 @@ function layoutNodes(nodeLabels, existingPositions) {
   });
   return positions;
 }
+
+// Fórmula LaTeX → HTML, para v-html (renderToString: las celdas salen de un v-for, sin id ni nextTick).
+function tex(s) { return katex.renderToString(s, { throwOnError: false }); }
+// Texto con fórmulas entre $…$: los tramos impares son LaTeX, el resto texto plano (escapado).
+function texInline(s) {
+  return s.split('$').map((t, i) => i % 2 ? tex(t) : t.replace(/&/g, '&amp;').replace(/</g, '&lt;')).join('');
+}
+
+const COMPLEXITY = {
+  total: "O((N+K+M)\\,\\alpha(N))",
+  headers: ["Línea", "Veces", "Costo"],
+  rows: [
+    ["conjuntos ← UnionFind(N); componentes ← N; puentesUsados ← 0", "1", "O(N)"],
+    ["PARA CADA (u, v) EN túneles", "K", "O(K)"],
+    ["SI conjuntos.find(u) ≠ conjuntos.find(v) (túneles)", "2 \\text{ por vuelta}, 2K", "O(K\\,\\alpha(N))"],
+    ["conjuntos.union(u, v); componentes ← componentes - 1 (túneles)", "\\le N - 1", "O(N\\,\\alpha(N))"],
+    ["PARA CADA (u, v) EN puentes; SI componentes = 1", "\\le M", "O(M)"],
+    ["SI conjuntos.find(u) ≠ conjuntos.find(v) (puentes)", "2 \\text{ por vuelta}, \\le 2M", "O(M\\,\\alpha(N))"],
+    ["conjuntos.union(u, v); componentes; puentesUsados (puentes)", "\\le N - 1 \\text{ (junto con los túneles)}", "O(N\\,\\alpha(N))"],
+  ],
+  note: "Con compresión de caminos y unión por rango, cada find o union cuesta $O(\\alpha(N))$ amortizado, y $\\alpha(N) \\le 4$ para cualquier $N$ posible. Las uniones, entre túneles y puentes, son a lo sumo $N - 1$. Total: $O(N + (K+M)\\,\\alpha(N))$, en la práctica lineal. No se ordena: con pesos 0 y 1 alcanzan dos pasadas (Kruskal ordenando costaría $O(E \\log E)$). La animación usa el Union-Find ingenuo, donde un find puede costar $O(N)$ y el peor caso sube a $O((K+M)\\,N)$. Memoria: $O(N + K + M)$.",
+};
 
 createApp({
   setup() {
@@ -998,6 +1036,7 @@ createApp({
     });
 
     return {
+      complexity: COMPLEXITY, tex, texInline,
       nodes, PSEUDOCODE, ROW_CLASS, ROW_TITLE, UF_R, MAX_N, MAX_EDGES, tab,
       steps, currentStepIndex, currentStep, isAtEnd, sortedLabels, forest,
       isOpenRow, padreCellClass, forestLinkClass, fmtSet, palette, nodeFill, nodeStroke,
