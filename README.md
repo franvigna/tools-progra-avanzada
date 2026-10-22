@@ -160,6 +160,7 @@ Resolución paso a paso de ejercicios propuestos, con el mismo formato que el re
 | [`ejercicios/PuertoGaviota.html`](ejercicios/PuertoGaviota.html) | Puerto Gaviota: el metro (MST con pesos 0/1: túneles gratis, mínimo de puentes) | O((N+K+M)·α(N)) |
 | [`ejercicios/RescatandoALaPrincesa.html`](ejercicios/RescatandoALaPrincesa.html) | Rescatando a la Princesa (Dijkstra multi-origen de los dragones + Dijkstra podado del príncipe) | O((c+s)·log c) |
 | [`ejercicios/CaminoAUNLaM.html`](ejercicios/CaminoAUNLaM.html) | Camino a UNLaM (Dijkstra desde Casa sobre el grafo de tramos, con tabla de iteraciones S / V − S / w / D / P y reconstrucción del camino) | O((V+E)·log V) |
+| [`ejercicios/GrillaDeAlfonsina.html`](ejercicios/GrillaDeAlfonsina.html) | La grilla de Alfonsina (coloreo de grafos con Welsh-Powell: materias como vértices, franjas como colores, cota inferior por K4) | O(V·log V + k·(V+E)) |
 
 Salvo Camino a UNLaM (que es `grafos/dijkstra.html` con el grafo y las preguntas de la consigna), usan el formato de entrada del enunciado y tienen pseudocódigo con la línea activa, tabla de seguimiento y una pestaña "Resolución" con lo que pide el enunciado (modelado, pseudocódigo, complejidad).
 
