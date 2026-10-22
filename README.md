@@ -73,7 +73,7 @@ El Teorema Maestro analiza recurrencias por división T(n) = a·T(n/b) + O(n^c):
 | [`grafos/prim.html`](grafos/prim.html) | Prim — Árbol de Expansión Mínima (cola de prioridad de aristas) | O(E·log E) |
 | [`grafos/kruskal.html`](grafos/kruskal.html) | Kruskal — Árbol de Expansión Mínima (cola de aristas + Union-Find) | O(E·log E) |
 | [`grafos/coloreo.html`](grafos/coloreo.html) | Coloreo de Grafos — Secuencial greedy (orden natural, Welsh-Powell, Matula), por vértice o por color | O(V·log V + E) / O(V·log V + χ·(V+E)) |
-| [`grafos/union-find.html`](grafos/union-find.html) | Union-Find — Comparación de variantes (quick-find, quick-union, weighted, path halving) | — |
+| [`grafos/floyd-warshall.html`](grafos/floyd-warshall.html) | Floyd (costos mínimos + predecesores) y Warshall (clausura transitiva) entre todos los pares | O(V³) |
 
 DFS, BFS, Dijkstra y Prim permiten:
 - Cargar cualquier grafo no dirigido escribiendo su lista de aristas (`A-B`, una por línea o separadas por coma; un token sin guion declara un nodo aislado); el orden de las aristas define el orden de exploración de los vecinos.
@@ -81,6 +81,7 @@ DFS, BFS, Dijkstra y Prim permiten:
 - Ver en todo momento la estructura de datos del algoritmo (pila en DFS, cola + array de distancias en BFS), el pseudocódigo con la línea actual resaltada, y una explicación en lenguaje llano de cada paso.
 - Distinguir por color los nodos no visitados / pendientes / actual / ya procesados, y las aristas de árbol (llevaron a un nodo nuevo) de las descartadas (llevan a uno ya visitado) — clasificación que queda fija una vez que la arista se examina. BFS además muestra la distancia (en saltos) desde el nodo inicial junto a cada nodo descubierto.
 - Arrastrar los nodos para destrabar cruces de aristas.
+- Hacer clic en un nodo para fijarlo: queda marcado en el grafo y en las tablas, y una card "📌 Nodo" cuenta su estado en cada paso (distancia, predecesor y camino, si está en el MST o en la cola, su subárbol en Kruskal, su color y los de sus vecinos). Esc lo suelta. Lo mismo en Prim, Kruskal y Coloreo.
 
 Dijkstra además:
 - Acepta aristas con peso (`A-B:3`; sin peso vale 1, los pesos negativos se rechazan) y se puede alternar entre grafo dirigido y no dirigido.
@@ -101,12 +102,11 @@ Kruskal además:
 - Union-Find ingenuo (`union(u, v)`: `padre[find(v)] ← find(u)`) mostrado como vector `padre[]` y como bosque de padres, con el camino de cada `find` y el `padre[]` que cambia en cada `union` resaltados. En el grafo, los vértices de un mismo subárbol comparten color.
 - Tabla de seguimiento (Iteración | Arista aᵢ | w(aᵢ) | find(u) / find(v) | Subárboles | W(MST)), con las aristas descartadas como filas tachadas. Si el grafo no es conexo, devuelve un bosque.
 
-El comparador de Union-Find no dibuja grafos: corre la misma secuencia de operaciones sobre las 4 variantes de Sedgewick a la vez, en una grilla 2×2.
-- Elementos `0..N−1` o con nombres alfanuméricos (ordenados; los que aparecen en las operaciones se agregan solos). Operaciones en vivo (`union(p, q)` / `find(p)` / `connected(p, q)` / `count()`) o como secuencia de texto (`4-3` = union, `?9` = find, `4?3` = connected, `#` = count); cada operación es un paso del historial, navegable como el resto de las herramientas.
-- Cada variante muestra `id[]` (y `sz[]` en las weighted), su bosque, el camino que recorrió `find`, las celdas que cambiaron y una explicación de lo que hizo. `union(p, q)` sigue la convención del libro: `id[find(p)] ← find(q)`; en las weighted, el árbol más chico cuelga del más grande (si empatan, el de q cuelga del de p). La compresión es por *halving*: `id[p] ← id[id[p]]`.
-- Pseudocódigo de `find`, `union`, `connected` y `count` de cada variante (count con el contador de Sedgewick, que `union` decrementa), con las líneas que cambian respecto de la variante anterior resaltadas.
-- Botón 🔍 en cada variante para verla sola, a todo el espacio y al 170% (✖ vuelve a las cuatro).
-- Tabla comparativa con los accesos a `id[]`/`sz[]` (última operación y acumulado) y la altura máxima del bosque de cada variante.
+Floyd · Warshall muestra la programación dinámica sobre matrices:
+- Mismo formato de grafo con pesos (`A-B:3`, se admiten negativos), dirigido o no; un selector cambia entre Floyd (`min`/`+`, costos y matriz de predecesores Z) y Warshall (`∨`/`∧`, ¿existe camino?), con su pseudocódigo.
+- Siempre a la vista C^(k−1), C^k y Z^k: fila y columna k sombreadas, los operandos de la celda en foco marcados en C^(k−1) y las celdas que mejoran con el valor viejo tachado.
+- Dos granularidades: "Por k" (cada paso completa una iteración y resume qué celdas mejoraron) o "Por celda" (C^k se llena de a una, con la fórmula instanciada); botones para saltar a cualquier k.
+- Clic en cualquier celda: fórmula general y con valores sustituidos (KaTeX), qué rama se tomó y su lectura ("para llegar de 2 a 1, paso por 3; para llegar de 2 a 3, vengo directamente de 2; el camino es 2, 3, 1"), con la cadena de Z y el camino resaltados en el grafo. Avisa si hay un ciclo negativo.
 
 El editor de grafos no ejecuta ningún algoritmo: solo dibuja.
 - Mismo formato de texto (`A-B` o `A-B:costo`, el costo es texto libre y opcional), dirigido o no dirigido, nodos arrastrables con las aristas siguiéndolos en vivo.
@@ -123,6 +123,7 @@ El editor de grafos no ejecuta ningún algoritmo: solo dibuja.
 | Archivo | Tema | Complejidad |
 |---|---|---|
 | [`estructuras/heap.html`](estructuras/heap.html) | Heap de mínimo (arreglo con la posición 0 sin usar) | insertar/extraer O(log n) |
+| [`estructuras/union-find.html`](estructuras/union-find.html) | Union-Find — Comparación de variantes (quick-find, quick-union, weighted, path halving) | — |
 
 El heap permite:
 - Insertar un valor, extraer el mínimo o consultarlo en vivo: cada operación se reproduce sola, paso a paso (cada comparación e intercambio de flotar/hundir), o se carga una secuencia entera como texto (`7, 5, 9, x, ?`: número = insertar, `x` = extraer, `?` = ver mínimo).
@@ -133,6 +134,13 @@ El heap permite:
 - Contador de intercambios y comparaciones de la operación en curso, al lado de la altura del heap ⌊log₂ n⌋: flotar y hundir hacen como mucho un intercambio por nivel, O(log n).
 - Tira con los mínimos extraídos, en el orden en que salieron.
 - Historial de operaciones clickeable, autoplay con velocidad ajustable, autoguardado, "🆕 Nuevo", "🔗 Compartir" y modo claro/oscuro como el resto.
+
+El comparador de Union-Find no dibuja grafos: corre la misma secuencia de operaciones sobre las 4 variantes de Sedgewick a la vez, en una grilla 2×2.
+- Elementos `0..N−1` o con nombres alfanuméricos (ordenados; los que aparecen en las operaciones se agregan solos). Operaciones en vivo (`union(p, q)` / `find(p)` / `connected(p, q)` / `count()`) o como secuencia de texto (`4-3` = union, `?9` = find, `4?3` = connected, `#` = count); cada operación es un paso del historial, navegable como el resto de las herramientas.
+- Cada variante muestra `id[]` (y `sz[]` en las weighted), su bosque, el camino que recorrió `find`, las celdas que cambiaron y una explicación de lo que hizo. `union(p, q)` sigue la convención del libro: `id[find(p)] ← find(q)`; en las weighted, el árbol más chico cuelga del más grande (si empatan, el de q cuelga del de p). La compresión es por *halving*: `id[p] ← id[id[p]]`.
+- Pseudocódigo de `find`, `union`, `connected` y `count` de cada variante (count con el contador de Sedgewick, que `union` decrementa), con las líneas que cambian respecto de la variante anterior resaltadas.
+- Botón 🔍 en cada variante para verla sola, a todo el espacio y al 170% (✖ vuelve a las cuatro).
+- Tabla comparativa con los accesos a `id[]`/`sz[]` (última operación y acumulado) y la altura máxima del bosque de cada variante.
 
 ### Branch & Bound
 
@@ -175,9 +183,9 @@ El viajante (TSP) es de minimización: el mismo pseudocódigo con `mejor ← +�
 | [`dp/edit-distance.html`](dp/edit-distance.html) | Distancia de Edición (Levenshtein) | O(m·n) |
 
 Todas permiten:
-- Editar los datos de entrada (cadenas, capacidad, elementos, costos) y resolver.
-- Ver la tabla de PD completa.
-- Hacer clic en cualquier celda para ver, paso a paso, la fórmula de recurrencia y la sustitución numérica que produjo ese valor, con las celdas de las que depende resaltadas por color.
+- Editar los datos de entrada (cadenas, capacidad, elementos, costos) y aplicarlos con "▶ Aplicar".
+- Llenar la tabla de PD paso a paso (⏮ ⏪ ▶️ ⏩, velocidad ajustable y flechas ← →), celda por celda o fila por fila, con el pseudocódigo con la línea actual resaltada. Al abrir y al aplicar arranca con solo los casos base, para no develar el resultado: las celdas pendientes quedan vacías y el resultado aparece al llenar la última. En la mochila se ve también la fila 0 (ningún elemento).
+- Hacer clic en cualquier celda para ver la fórmula de recurrencia y la sustitución numérica que produjo ese valor, con las celdas de las que depende resaltadas por color y los mismos colores en los términos de la fórmula. Mientras se recorre, la explicación sigue a la celda del paso; un clic la fija y Esc la suelta.
 - Ver el resultado final (valor óptimo / LCS / distancia mínima) y la reconstrucción de la solución (objetos elegidos / subsecuencia / secuencia de operaciones).
 - Cambiar entre modo claro y oscuro (botón 🌙/☀️ en la barra superior, se recuerda entre visitas).
 - Autoguardado en el navegador (localStorage): la configuración queda como estaba al volver a abrir la herramienta.

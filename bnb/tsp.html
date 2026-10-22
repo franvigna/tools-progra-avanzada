@@ -116,9 +116,9 @@
         title="Arrancar con el tour greedy (vecino más cercano desde v1) como mejor inicial">🧭 Greedy {{ greedy ? 'sí' : 'no' }}</button>
       <div class="btn-group btn-group-sm">
         <button class="btn btn-outline-light" @click="restartAnimation" title="Reiniciar animación (mismos datos)">⏮</button>
-        <button class="btn btn-outline-light" @click="stepBackward" :disabled="currentStepIndex === 0" title="Paso anterior">⏪</button>
+        <button class="btn btn-outline-light" @click="stepBackward" :disabled="currentStepIndex === 0" title="Paso anterior (←)">⏪</button>
         <button class="btn btn-outline-light" @click="togglePlay" :title="isPlaying ? 'Pausar' : 'Reproducir'">{{ isPlaying ? '⏸️' : '▶️' }}</button>
-        <button class="btn btn-outline-light" @click="stepForward" :disabled="isAtEnd" title="Paso siguiente">⏩</button>
+        <button class="btn btn-outline-light" @click="stepForward" :disabled="isAtEnd" title="Paso siguiente (→)">⏩</button>
       </div>
       <input type="range" class="form-range" style="width:80px" min="150" max="2000" step="50"
         v-model.number="speedMs" title="Velocidad de reproducción" />
@@ -188,7 +188,7 @@
                 :title="pinnedVisible ? 'Fijado con un clic; Escape o clic en el vacío para soltarlo' : 'Sigue al paso actual; clic en un nodo para fijarlo'">{{ pinnedVisible ? 'fijado' : 'paso actual' }}</span>
             </div>
             <div class="card-body p-2">
-              <table class="table table-sm table-bordered mb-1 small mx">
+              <table class="table table-sm table-bordered mb-1 small mx font-monospace">
                 <thead><tr><th class="dp-header-cell"></th><th class="dp-header-cell" v-for="(_, c) in matrix" :key="c">{{ c + 1 }}</th></tr></thead>
                 <tbody>
                   <tr v-for="(row, r) in matrix" :key="r">
@@ -235,7 +235,7 @@
                   <tr v-if="!currentStep.pending.length"><td colspan="2" class="text-muted">(vacía)</td></tr>
                   <tr v-for="(id, idx) in currentStep.pending" :key="id">
                     <td class="font-monospace text-start">{{ nodes[id].label }} <span class="badge bg-primary" v-if="idx === 0" title="Es el próximo en salir">sale</span></td>
-                    <td class="text-nowrap">{{ nodes[id].detail }}</td>
+                    <td class="text-nowrap font-monospace">{{ nodes[id].detail }}</td>
                   </tr>
                 </tbody>
               </table>
@@ -272,10 +272,10 @@
                 <tr v-if="!currentStep.rows.length"><td colspan="5" class="text-muted">(todavía no salió ningún nodo)</td></tr>
                 <tr v-for="(row, idx) in currentStep.rows" :key="idx"
                   :class="{ 'row-open': idx === currentStep.rows.length - 1 && currentStep.current !== null, 'row-selected': pinnedVisible && row.id === pinnedId }">
-                  <td class="step-link" @click="selectRow(row)" title="Marcar este nodo en el árbol">{{ row.k }}</td>
+                  <td class="step-link font-monospace" @click="selectRow(row)" title="Marcar este nodo en el árbol">{{ row.k }}</td>
                   <td class="font-monospace text-start">{{ row.label }}</td>
-                  <td class="text-nowrap">{{ row.detail }}</td>
-                  <td :class="{ 'cell-final fw-bold': row.star }">{{ fmtBest(row.best) }}{{ row.star ? ' ★' : '' }}</td>
+                  <td class="text-nowrap font-monospace">{{ row.detail }}</td>
+                  <td class="font-monospace" :class="{ 'cell-final fw-bold': row.star }">{{ fmtBest(row.best) }}{{ row.star ? ' ★' : '' }}</td>
                   <td class="text-start">{{ row.what }}</td>
                 </tr>
               </tbody>
@@ -693,6 +693,15 @@ const COMPLEXITY = {
   note: "$N$ es la cantidad de nodos del árbol: los caminos desde v1 de 1 a $n - 1$ vértices, $N = \\sum_{k=0}^{n-2} \\frac{(n-1)!}{(n-1-k)!} \\le e \\cdot (n-1)!$ (41 con $n = 5$). Cada cota recorre las filas que faltan salir y, en cada una, las columnas permitidas: $O(n^2)$. Como $\\log N = O(n \\log n)$, la cola de prioridad no domina: el total es $O(N \\cdot n^2) = O(n^2 \\cdot (n-1)!)$ en el peor caso, con cualquiera de las tres estrategias. La poda no cambia el peor caso, pero en la práctica genera muchos menos nodos (17 de 41 en el ejemplo).",
 };
 
+// Auto-chequeo con la matriz por defecto: el tour óptimo es 1 → 4 → 5 → 2 → 3 → 1, de longitud 30
+// (verificado por fuerza bruta sobre las 24 permutaciones), con cualquier estrategia, con o sin greedy.
+(function selfCheck() {
+  for (const s of Object.keys(STRATEGIES)) for (const greedy of [true, false]) {
+    const end = computeSteps(DEFAULT_STATE.matrix, s, greedy).steps.at(-1);
+    console.assert(end.best === 30 && end.bestTour.join() === '0,3,4,1,2,0', `Viajante (${s}, greedy ${greedy}): tour óptimo`, end.best, end.bestTour);
+  }
+})();
+
 createApp({
   setup() {
     const STORAGE_KEY = 'pa-tools-bnb-tsp';
@@ -901,7 +910,11 @@ createApp({
       userAdjustedCamera = true;
     }
     function onKeydown(e) {
-      if (e.key === 'Escape' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) pinnedId.value = null;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+      if (e.key === 'Escape') pinnedId.value = null;
+      // ← → avanzan y retroceden.
+      if (e.key === 'ArrowRight') { e.preventDefault(); stepForward(); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); stepBackward(); }
     }
 
     // Clic en el número de paso de la tabla: selecciona ese nodo y, si está fuera de pantalla, lo centra.

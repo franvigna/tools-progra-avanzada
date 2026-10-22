@@ -51,6 +51,7 @@
       .code-panel { border-left: none; border-top: 1px solid var(--bs-border-color); }
     }
     summary.card-header { cursor: pointer; }
+    .th-pinned { box-shadow: inset 0 -3px 0 var(--bs-purple); color: var(--bs-purple) !important; }
   </style>
 </head>
 <body>
@@ -69,9 +70,9 @@
       </button>
       <div class="btn-group btn-group-sm" v-if="nodes.length">
         <button class="btn btn-outline-light" @click="restartAnimation" title="Reiniciar animación (mismo grafo)">⏮</button>
-        <button class="btn btn-outline-light" @click="stepBackward" :disabled="currentStepIndex === 0" title="Paso anterior">⏪</button>
+        <button class="btn btn-outline-light" @click="stepBackward" :disabled="currentStepIndex === 0" title="Paso anterior (←)">⏪</button>
         <button class="btn btn-outline-light" @click="togglePlay" :title="isPlaying ? 'Pausar' : 'Reproducir'">{{ isPlaying ? '⏸️' : '▶️' }}</button>
-        <button class="btn btn-outline-light" @click="stepForward" :disabled="isAtEnd" title="Paso siguiente">⏩</button>
+        <button class="btn btn-outline-light" @click="stepForward" :disabled="isAtEnd" title="Paso siguiente (→)">⏩</button>
       </div>
       <input v-if="nodes.length" type="range" class="form-range" style="width:80px" min="150" max="2000" step="50"
         v-model.number="speedMs" title="Velocidad de reproducción" />
@@ -129,7 +130,7 @@
                 <thead>
                   <tr>
                     <th class="dp-header-cell fst-italic" title="C(fila, columna): costo de ir de fila a columna">C</th>
-                    <th class="dp-header-cell" v-for="n in sortedNodes" :key="n.label">{{ n.label }}</th>
+                    <th class="dp-header-cell" v-for="n in sortedNodes" :key="n.label" :class="{ 'th-pinned': pinned === n.label }">{{ n.label }}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -151,7 +152,7 @@
                 <thead>
                   <tr>
                     <th class="dp-header-cell"></th>
-                    <th class="dp-header-cell" v-for="n in sortedNodes" :key="n.label">{{ n.label }}</th>
+                    <th class="dp-header-cell" v-for="n in sortedNodes" :key="n.label" :class="{ 'th-pinned': pinned === n.label }">{{ n.label }}</th>
                   </tr>
                 </thead>
                 <tbody v-if="currentStep">
@@ -202,7 +203,7 @@
                   <th class="dp-header-cell" title="S: nodos que ya se alcanzan con costo mínimo (su distancia es definitiva)">S</th>
                   <th class="dp-header-cell" title="V − S: nodos que todavía falta alcanzar con costo mínimo">V − S</th>
                   <th class="dp-header-cell" title="w: nodo elegido en esta iteración (el de menor distancia en la cola), que pasa a S">w</th>
-                  <th class="dp-header-cell" v-for="n in sortedNodes" :key="n.label"
+                  <th class="dp-header-cell" v-for="n in sortedNodes" :key="n.label" :class="{ 'th-pinned': pinned === n.label }"
                     :title="`D[${n.label}]: distancia mínima conocida desde el origen hasta ${n.label} · P[${n.label}]: nodo anterior a ${n.label} en ese camino`">D[{{ n.label }}]/P[{{ n.label }}]</th>
                 </tr>
               </thead>
@@ -245,6 +246,17 @@
             <div id="formula-box" class="bg-body-tertiary rounded p-2 mt-3 overflow-auto" v-show="currentStep && currentStep.formula"></div>
             <p class="small text-muted mt-3 mb-0" v-if="currentStep">Paso {{ currentStepIndex + 1 }} de {{ steps.length }}</p>
           </div>
+        </div>
+
+        <div class="card mb-3" v-if="currentStep">
+          <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+            <span>📌 {{ pinnedInfo ? `Nodo ${pinned}` : 'Nodo fijado' }}</span>
+            <button class="btn btn-sm btn-outline-secondary py-0" v-if="pinnedInfo" @click="togglePin(pinned)" title="Soltar (Esc)">✕</button>
+          </div>
+          <ul class="list-group list-group-flush small" v-if="pinnedInfo">
+            <li class="list-group-item" v-for="(line, idx) in pinnedInfo" :key="idx">{{ line }}</li>
+          </ul>
+          <div class="card-body small text-muted py-2" v-else>Hacé clic en un nodo del grafo para seguir su estado paso a paso.</div>
         </div>
 
         <details class="card mb-3">
@@ -498,6 +510,15 @@ const COMPLEXITY = {
   note: "La cola es un heap sin \"decrementar clave\": cada relajación agrega una entrada nueva, así que puede llegar a tener $E + 1$, y las viejas se descartan al extraerlas (SI NO visitado). Cada operación del heap cuesta $O(\\log E)$, y como $E \\le V^2$, $\\log E \\le 2 \\log V = O(\\log V)$. Total: $O(V) + O(E \\log V) = O((V+E) \\log V)$. En un grafo no dirigido, $E$ cuenta cada arista en los dos sentidos. Con matriz de adyacencia y sin heap (buscando el mínimo a mano) es $O(V^2)$.",
 };
 
+// Auto-chequeo con el ejemplo de la cátedra: 0 → 2 (3) → 1 (5) → 3 (7), mejor que los caminos directos 0 → 1 (7) y 2 → 3 (11).
+(function selfCheck() {
+  const { nodeLabels, edges } = parseGraphText(DEFAULT_GRAPH_TEXT, true);
+  const end = computeSteps(buildAdjacency(nodeLabels, edges, true), nodeLabels, '0').at(-1);
+  console.assert(JSON.stringify(end.dist) === '{"0":0,"1":5,"2":3,"3":7}', 'Dijkstra: distancias', end.dist);
+  console.assert(JSON.stringify(end.pred) === '{"1":"2","2":"0","3":"1"}', 'Dijkstra: predecesores', end.pred);
+  console.assert(end.visited.join('') === '0213', 'Dijkstra: orden en que los nodos pasan a S', end.visited);
+})();
+
 createApp({
   setup() {
     const STORAGE_KEY = 'pa-tools-grafos-dijkstra';
@@ -678,6 +699,15 @@ createApp({
     }
     function stepForward() { if (!isAtEnd.value) goToStep(currentStepIndex.value + 1); else stopAutoplay(); }
     function stepBackward() { goToStep(currentStepIndex.value - 1); }
+    // ← → avanzan y retroceden, salvo mientras se escribe en un campo.
+    function onStepKey(e) {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+      if (e.key === 'Escape' && pinned.value) togglePin(pinned.value);
+      if (e.key === 'ArrowRight') { e.preventDefault(); stepForward(); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); stepBackward(); }
+    }
+    window.addEventListener('keydown', onStepKey);
+    onBeforeUnmount(() => window.removeEventListener('keydown', onStepKey));
     function restartAnimation() { stopAutoplay(); goToStep(0); }
     function stopAutoplay() {
       isPlaying.value = false;
@@ -726,15 +756,19 @@ createApp({
     // ── Mouse: arrastrar un nodo si el mousedown empieza sobre él, si no, pan de cámara ──
     let isPanning = false, panStart = null;
     let draggingNode = null;
+    // Un clic sin arrastrar (menos de 4 px) fija o suelta el nodo; si se mueve, es un arrastre.
+    let dragStart = null, dragMoved = false;
     function onCanvasMouseDown(e) {
       const hit = hitTestNode(e.offsetX, e.offsetY);
-      if (hit) { draggingNode = hit; return; }
+      if (hit) { draggingNode = hit; dragStart = { x: e.offsetX, y: e.offsetY }; dragMoved = false; return; }
       isPanning = true;
       panStart = { x: e.offsetX, y: e.offsetY, offsetX: camera.offsetX, offsetY: camera.offsetY };
       canvasEl.value.style.cursor = 'grabbing';
     }
     function onCanvasMouseMove(e) {
       if (draggingNode) {
+        if (Math.hypot(e.offsetX - dragStart.x, e.offsetY - dragStart.y) > 3) dragMoved = true;
+        if (!dragMoved) return;
         const w = screenToWorld(e.offsetX, e.offsetY);
         draggingNode.x = w.x;
         draggingNode.y = w.y;
@@ -747,8 +781,12 @@ createApp({
       userAdjustedCamera.value = true;
       draw();
     }
-    function onCanvasMouseUp() {
-      if (draggingNode) { draggingNode = null; persist(); }
+    function onCanvasMouseUp(e) {
+      if (draggingNode) {
+        if (dragMoved) persist();
+        else if (e.type === 'mouseup') togglePin(draggingNode.label);
+        draggingNode = null;
+      }
       isPanning = false;
       if (canvasEl.value) canvasEl.value.style.cursor = 'grab';
     }
@@ -809,7 +847,49 @@ createApp({
       return { x: mx - dy / len * bow, y: my + dx / len * bow };
     }
 
-    function draw() {
+    const pinnedInfo = computed(() => {
+      const s = currentStep.value, x = pinned.value;
+      if (!s || !x || !adjacencyMap.has(x)) return null;
+      const d = s.dist[x];
+      const lines = [
+        s.current === x ? 'Es el nodo v que se está procesando en este paso.'
+          : s.visited.includes(x) ? `Está en S: su distancia ${d} es definitiva.`
+          : d !== Infinity ? `Tiene distancia tentativa ${d}: todavía puede bajar.`
+          : 'Todavía no se alcanzó (distancia ∞).',
+      ];
+      if (d !== Infinity && x !== startId.value) {
+        const path = [x];
+        while (path[0] !== startId.value && s.pred[path[0]] !== undefined && path.length <= nodes.value.length) path.unshift(s.pred[path[0]]);
+        lines.push(`predecesores[${x}] = ${s.pred[x]}. Camino según los predecesores: ${path.join(' → ')}, costo ${d}.`);
+      }
+      const succ = adjacencyMap.get(x).map(({ to, w }) => `${to} (${w})`);
+      lines.push(`Sucesores (peso): ${succ.join(', ') || 'ninguno'}.`);
+      return lines;
+    });
+
+    // ── Nodo fijado con un clic: anillo violeta en el grafo, su columna en las tablas y una card con su estado ──
+    const pinned = ref(null);
+    function togglePin(label) {
+      pinned.value = pinned.value === label ? null : label;
+      draw();
+    }
+    function drawPin() {
+      const n = pinned.value && nodeByLabel(pinned.value);
+      if (!n || !canvasEl.value) return;
+      const ctx = canvasEl.value.getContext('2d');
+      const p = worldToScreen(n.x, n.y);
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, NODE_R * camera.scale + 6, 0, Math.PI * 2);
+      ctx.strokeStyle = isDark.value ? '#a98eda' : '#6f42c1';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([5, 3]);
+      ctx.stroke();
+      ctx.restore();
+    }
+    function draw() { drawGraph(); drawPin(); }
+
+    function drawGraph() {
       const canvas = canvasEl.value;
       if (!canvas || !containerEl.value) return;
       const ctx = canvas.getContext('2d');
@@ -941,6 +1021,7 @@ createApp({
       showEditor, graphTextDraft, graphError, applyGraphText,
       newConfirm, handleNewClick, shareCopied, shareCurrentState,
       isDark, toggleTheme, fitToView,
+      pinned, pinnedInfo, togglePin,
       canvasEl, containerEl, onCanvasMouseDown, onCanvasMouseMove, onCanvasMouseUp, onCanvasWheel,
     };
   }
