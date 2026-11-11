@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>El puente y la linterna: Branch & Bound</title>
+
+  <!-- Tema claro/oscuro: se fija ANTES de cargar el CSS para evitar parpadeo -->
+  <script>
+    (function () {
+      const stored = localStorage.getItem('theme');
+      const theme = stored || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-bs-theme', theme);
+    })();
+  </script>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.10/dist/katex.min.js"></script>
+
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #app { display: flex; flex-direction: column; height: 100vh; }
+    .main-row { flex: 1 1 auto; display: flex; min-height: 0; }
+    .left-col { flex: 2 1 0; display: flex; flex-direction: column; min-width: 0; }
+    .top-row { flex: 1 1 65%; display: flex; min-height: 0; }
+    .tree-area { flex: 1 1 0; position: relative; min-width: 0; }
+    .tree-view { position: absolute; inset: 0; overflow: hidden; }
+    .tree-view svg { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+    .tree-view svg.panning { cursor: grabbing; }
+    .data-panel { flex: 0 1 auto; width: 300px; max-width: 45%; overflow: auto; border-left: 1px solid var(--bs-border-color); padding: .5rem; }
+    .trace-wrap { flex: 1 1 35%; overflow: auto; border-top: 1px solid var(--bs-border-color); padding: .5rem; }
+    .code-panel { flex: 1 1 0; overflow-y: auto; border-left: 1px solid var(--bs-border-color); min-width: 300px; }
+    .footer-bar { flex: 0 0 auto; padding: .25rem 0; }
+    .editor-panel { position: absolute; bottom: .75rem; left: .75rem; width: 300px; max-width: calc(100% - 1.5rem); }
+    .pseudo-code { font-family: Consolas, monospace; font-size: .8rem; white-space: pre; padding: .5rem 0; overflow-x: auto; }
+    .pseudo-line { padding: .1rem .75rem; min-height: 1.2em; }
+    .pseudo-active { background: var(--bs-warning-bg-subtle); color: var(--bs-emphasis-color); font-weight: 600; }
+    .dp-header-cell { background-color: var(--bs-secondary-bg-subtle) !important; color: var(--bs-emphasis-color) !important; }
+    .mini-table td, .mini-table th { padding: .15rem .5rem; }
+    .row-open > td { background-color: var(--bs-warning-bg-subtle) !important; }
+    /* Paso del nodo seleccionado (clic en el nodo o en el número de paso) */
+    .row-selected > td { background-color: color-mix(in srgb, var(--bs-purple) 18%, var(--bs-body-bg)) !important; }
+    .step-link { cursor: pointer; color: var(--bs-link-color); text-decoration: underline dotted; }
+    .cell-final { background-color: var(--bs-success-bg-subtle) !important; }
+
+    /* Árbol de estados (SVG) */
+    .bn-edge { stroke: var(--bs-secondary-color); stroke-width: 1.5; fill: none; }
+    .bn-node, .bn-edge, .bn-edge-label { transition: transform .3s ease, d .3s ease; }
+    .bn-edge.active { stroke: var(--bs-primary); stroke-width: 3; }
+    .bn-edge.best-path { stroke: var(--bs-success); stroke-width: 3; }
+    .bn-edge-label { font-size: 11px; fill: var(--bs-secondary-color); paint-order: stroke; stroke: var(--bs-body-bg); stroke-width: 4px; }
+    .bn-box { fill: var(--bs-tertiary-bg); stroke: var(--bs-secondary-color); stroke-width: 1.2; }
+    .bn-pending .bn-box { fill: var(--bs-body-bg); stroke: var(--bs-primary); stroke-dasharray: 5 4; }
+    .bn-best .bn-box { fill: var(--bs-success-bg-subtle); stroke: var(--bs-success); stroke-width: 2; }
+    .bn-current .bn-box { fill: var(--bs-warning-bg-subtle); stroke: var(--bs-warning); stroke-width: 3; stroke-dasharray: none; }
+    .bn-pinned .bn-box { stroke: var(--bs-purple); stroke-width: 3; stroke-dasharray: none; }
+    .bn-text { font-family: Consolas, monospace; font-size: 12px; fill: var(--bs-body-color); }
+    .bn-order circle { fill: var(--bs-body-bg); stroke: var(--bs-secondary-color); }
+    .bn-order text { font-size: 11px; font-weight: 600; fill: var(--bs-body-color); }
+    .bn-mark text { font-size: 11px; font-weight: 700; }
+    .bn-mark.pruned circle { fill: var(--bs-danger-bg-subtle); stroke: var(--bs-danger); }
+    .bn-mark.pruned text { fill: var(--bs-danger-text-emphasis); }
+    .bn-mark.best circle { fill: var(--bs-success); }
+    .bn-mark.best text { fill: #fff; }
+    .legend-box { display: inline-block; width: 1.6em; height: 1.1em; border-radius: 3px; border: 1px solid var(--bs-secondary-color); background: var(--bs-tertiary-bg); }
+    .legend-box.pending { background: var(--bs-body-bg); border: 1px dashed var(--bs-primary); }
+    .legend-box.current { background: var(--bs-warning-bg-subtle); border: 2px solid var(--bs-warning); }
+    .legend-box.best { background: var(--bs-success-bg-subtle); border: 2px solid var(--bs-success); }
+    .legend-box.pinned { border: 2px solid var(--bs-purple); }
+
+    /* Orillas del puente: cada persona es un chip con su tiempo; el borde violeta marca las que cuentan en las idas de la cota */
+    .bank { flex: 1 1 0; min-width: 0; border: 1px solid var(--bs-border-color); border-radius: .375rem; padding: .25rem; }
+    .chip-p { display: inline-block; padding: 0 .45em; border-radius: 1em; border: 1px solid var(--bs-border-color); background: var(--bs-tertiary-bg); font-family: Consolas, monospace; font-size: .8rem; }
+    .chip-p.counted { border: 2px solid var(--bs-purple); font-weight: 700; }
+
+    .theory p, .theory li { font-size: .875rem; }
+    .theory ul, .theory ol { padding-left: 1.2rem; }
+    @media (max-width: 768px) {
+      #app { height: auto; }
+      .main-row, .top-row { flex-direction: column; }
+      .tree-area { flex: none; height: 360px; }
+      .data-panel { width: auto; max-width: none; border-left: none; border-top: 1px solid var(--bs-border-color); }
+      .code-panel { border-left: none; border-top: 1px solid var(--bs-border-color); }
+    }
+    summary.card-header { cursor: pointer; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <nav class="navbar navbar-dark bg-dark px-3">
+    <a class="navbar-brand mb-0 h5" href="../index.html" title="Volver a todas las herramientas"><span class="opacity-75 me-1">←</span>🔦 El puente y la linterna</a>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <span class="badge bg-secondary">Ejercicio · B&B · O(N·n·log n)</span>
+      <span class="badge bg-success" v-if="currentStep" title="Menor tiempo total encontrado hasta ahora">mejor = {{ fmtBest(currentStep.best) }}</span>
+      <div class="btn-group btn-group-sm">
+        <button class="btn btn-outline-light" @click="restartAnimation" title="Reiniciar animación (mismos datos)">⏮</button>
+        <button class="btn btn-outline-light" @click="stepBackward" :disabled="currentStepIndex === 0" title="Paso anterior (←)">⏪</button>
+        <button class="btn btn-outline-light" @click="togglePlay" :title="isPlaying ? 'Pausar' : 'Reproducir'">{{ isPlaying ? '⏸️' : '▶️' }}</button>
+        <button class="btn btn-outline-light" @click="stepForward" :disabled="isAtEnd" title="Paso siguiente (→)">⏩</button>
+      </div>
+      <input type="range" class="form-range" style="width:80px" min="150" max="2000" step="50"
+        v-model.number="speedMs" title="Velocidad de reproducción" />
+      <button class="btn btn-sm btn-outline-light" @click="fitToView(true)" title="Ver el árbol entero (arrastrar para mover, rueda para zoom)">🎯</button>
+      <button class="btn btn-sm" :class="showEditor ? 'btn-light' : 'btn-outline-light'" @click="showEditor = !showEditor" title="Cambiar los tiempos de cruce">✏️ Datos</button>
+      <button class="btn btn-sm" :class="newConfirm ? 'btn-warning text-dark' : 'btn-outline-light'" @click="handleNewClick" title="Volver a los datos de la consigna">
+        {{ newConfirm ? '¿Seguro?' : '🆕 Nuevo' }}
+      </button>
+      <button class="btn btn-sm btn-outline-light" @click="shareCurrentState" title="Copiar un link para compartir estos datos">
+        {{ shareCopied ? '✅ Copiado' : '🔗 Compartir' }}
+      </button>
+      <button class="btn btn-sm btn-outline-light" @click="toggleTheme" :title="isDark ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'">{{ isDark ? '☀️' : '🌙' }}</button>
+    </div>
+  </nav>
+
+  <div class="main-row">
+    <div class="left-col">
+      <div class="top-row">
+        <div class="tree-area">
+          <div class="tree-view" ref="treeViewEl">
+            <svg v-if="currentStep" :class="{ panning: isPanning }"
+              @pointerdown="onPointerDown" @pointermove="onPointerMove" @pointerup="onPointerUp" @pointercancel="onPointerUp"
+              @wheel.prevent="onWheel">
+              <g :transform="`translate(${camera.x}, ${camera.y}) scale(${camera.scale})`">
+                <g v-for="n in visibleNodes.filter(n => n.parent !== null)" :key="`e${n.id}`">
+                  <path class="bn-edge" :class="{ active: currentStep.inserted === n.id, 'best-path': bestPath.has(n.id) }" :style="`d: path('${edgePath(n)}')`" />
+                  <text class="bn-edge-label" text-anchor="middle" dominant-baseline="central"
+                    :style="`transform: translate(${labelAt(n).x}px, ${labelAt(n).y}px)`">{{ n.act }}</text>
+                </g>
+                <g v-for="n in visibleNodes" :key="n.id" :data-node-id="n.id" class="bn-node" :class="nodeClass(n)" :style="`transform: translate(${placed.pos[n.id].x}px, ${placed.pos[n.id].y}px)`" style="cursor: pointer;">
+                  <title>{{ nodeTitle(n) }}</title>
+                  <rect class="bn-box" :x="-layout.boxW / 2" :y="-BOX_H / 2" :width="layout.boxW" :height="BOX_H" rx="6" />
+                  <text class="bn-text" text-anchor="middle" y="-5">{{ n.label }}</text>
+                  <text class="bn-text" text-anchor="middle" y="12">{{ n.detail }}</text>
+                  <g class="bn-order" v-if="currentStep.order[n.id]" :transform="`translate(${layout.boxW / 2 - 4}, ${-BOX_H / 2})`">
+                    <circle r="11" />
+                    <text text-anchor="middle" dominant-baseline="central">{{ currentStep.order[n.id] }}</text>
+                  </g>
+                  <g class="bn-mark" :class="markOf(n)" v-if="markOf(n)" :transform="`translate(${-layout.boxW / 2 + 2}, ${BOX_H / 2 - 2})`">
+                    <circle r="10" />
+                    <text text-anchor="middle" dominant-baseline="central">{{ MARKS[markOf(n)] }}</text>
+                  </g>
+                </g>
+              </g>
+            </svg>
+          </div>
+
+          <div class="card shadow-sm editor-panel" v-if="showEditor">
+            <div class="card-body p-2">
+              <label class="form-label small text-muted mb-1">
+                Tiempo de cruce de cada persona, separados por espacios, de {{ MIN_P }} a {{ MAX_P }} personas (A, B, C...). La consigna: <code>1 2 5 10</code>.
+              </label>
+              <textarea class="form-control form-control-sm mb-2" rows="2" v-model="timesDraft" style="font-family: monospace"></textarea>
+              <div class="alert alert-danger small py-1 px-2 mb-2" v-if="draftError">{{ draftError }}</div>
+              <button class="btn btn-dark btn-sm w-100" @click="applyDraft">▶ Aplicar</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="data-panel" v-if="currentStep">
+          <div class="card mb-2">
+            <div class="card-header py-1 px-2 small fw-semibold d-flex align-items-center gap-1">
+              <span class="text-nowrap">🌉 Estado de</span> <span class="font-monospace text-truncate">{{ focus.label }}</span>
+              <span class="badge ms-auto" :class="pinnedVisible ? 'text-white' : 'bg-secondary'" :style="pinnedVisible ? 'background: var(--bs-purple)' : ''"
+                :title="pinnedVisible ? 'Fijado con un clic; Escape o clic en el vacío para soltarlo' : 'Sigue al paso actual; clic en un nodo para fijarlo'">{{ pinnedVisible ? 'fijado' : 'paso actual' }}</span>
+            </div>
+            <div class="card-body p-2">
+              <div class="d-flex gap-1 mb-2">
+                <div class="bank">
+                  <div class="small text-muted">Salida {{ focus.torchLeft ? '🔦' : '' }}</div>
+                  <div class="d-flex flex-wrap gap-1">
+                    <span v-for="p in focus.left" :key="p" class="chip-p" :class="{ counted: focus.counted.includes(p) }">{{ nameOf(p) }}·{{ times[p] }}</span>
+                    <span v-if="!focus.left.length" class="small text-muted">(vacía)</span>
+                  </div>
+                </div>
+                <div class="bank">
+                  <div class="small text-muted">Llegada {{ focus.torchLeft ? '' : '🔦' }}</div>
+                  <div class="d-flex flex-wrap gap-1">
+                    <span v-for="p in rightOf(focus)" :key="p" class="chip-p">{{ nameOf(p) }}·{{ times[p] }}</span>
+                    <span v-if="!rightOf(focus).length" class="small text-muted">(vacía)</span>
+                  </div>
+                </div>
+              </div>
+              <div class="small font-monospace">{{ focus.calc }}</div>
+              <div class="small text-muted mt-1"><span class="chip-p counted">X·n</span> cuenta en las idas de la cota: el más lento de cada pareja</div>
+            </div>
+          </div>
+
+          <div class="card mb-2">
+            <div class="card-header py-1 px-2 small fw-semibold">📥 Pendientes (cola de prioridad)</div>
+            <div class="card-body p-2">
+              <table class="table table-sm table-bordered text-center mb-0 mini-table small">
+                <thead>
+                  <tr><th class="dp-header-cell">nodo</th><th class="dp-header-cell">t / cota</th></tr>
+                </thead>
+                <tbody>
+                  <tr v-if="!currentStep.pending.length"><td colspan="2" class="text-muted">(vacía)</td></tr>
+                  <tr v-for="(id, idx) in currentStep.pending" :key="id">
+                    <td class="font-monospace text-start">{{ nodes[id].label }} <span class="badge bg-primary" v-if="idx === 0" title="Es el próximo en salir">sale</span></td>
+                    <td class="text-nowrap font-monospace">{{ nodes[id].detail }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p class="small text-muted mt-1 mb-0">En el orden en que van a salir: menor cota, luego mayor tiempo acumulado, luego el generado primero.</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header py-1 px-2 small fw-semibold">★ Mejor</div>
+            <div class="card-body p-2 small">
+              <div>mejor = <b>{{ fmtBest(currentStep.best) }}</b></div>
+              <div>mejorSolucion = <span class="font-monospace">{{ currentStep.bestId !== null ? nodes[currentStep.bestId].label : '-' }}</span></div>
+              <div class="text-muted mt-1">Generados: {{ visibleNodes.length }} de {{ maxNodes }} nodos posibles</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="trace-wrap" v-if="currentStep">
+        <div class="card">
+          <div class="card-header py-1 px-2 small fw-semibold">📋 Orden en que salen los nodos de la cola</div>
+          <div class="card-body p-2" style="overflow-x: auto;">
+            <table class="table table-sm table-bordered text-center align-middle mb-0 small">
+              <thead>
+                <tr>
+                  <th class="dp-header-cell" title="Número de paso: uno por cada nodo que sale de pendientes">Paso</th>
+                  <th class="dp-header-cell" title="Nodo que sale de pendientes, identificado por la secuencia de acciones">Nodo</th>
+                  <th class="dp-header-cell" title="Tiempo acumulado del nodo">Tiempo</th>
+                  <th class="dp-header-cell" title="Cota del nodo (en una solución, su tiempo)">Cota</th>
+                  <th class="dp-header-cell" title="Valor de mejor después de procesar el nodo">mejor</th>
+                  <th class="dp-header-cell">Qué se hizo</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-if="!currentStep.rows.length"><td colspan="6" class="text-muted">(todavía no salió ningún nodo)</td></tr>
+                <tr v-for="(row, idx) in currentStep.rows" :key="idx"
+                  :class="{ 'row-open': idx === currentStep.rows.length - 1 && currentStep.current !== null, 'row-selected': pinnedVisible && row.id === pinnedId }">
+                  <td class="step-link font-monospace" @click="selectRow(row)" title="Marcar este nodo en el árbol">{{ row.k }}</td>
+                  <td class="font-monospace text-start">{{ row.label }}</td>
+                  <td class="font-monospace">{{ row.cost }}</td>
+                  <td class="font-monospace">{{ row.bound }}</td>
+                  <td class="font-monospace" :class="{ 'cell-final fw-bold': row.star }">{{ fmtBest(row.best) }}{{ row.star ? ' ★' : '' }}</td>
+                  <td class="text-start">{{ row.what }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="code-panel">
+      <ul class="nav nav-tabs px-3 pt-2">
+        <li class="nav-item"><button class="nav-link" :class="{ active: tab === 'pasos' }" @click="tab = 'pasos'">▶ Paso a paso</button></li>
+        <li class="nav-item"><button class="nav-link" :class="{ active: tab === 'teoria' }" @click="tab = 'teoria'">📖 Resolución</button></li>
+      </ul>
+
+      <div class="p-3" v-if="tab === 'pasos'">
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">💻 Pseudocódigo</div>
+          <div class="card-body p-0">
+            <div class="pseudo-code">
+              <div v-for="(line, idx) in PSEUDOCODE" :key="idx" class="pseudo-line"
+                :class="{ 'pseudo-active': currentStep && currentStep.activeLines.includes(idx) }">{{ line }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">🧩 Funciones para el puente</div>
+          <div class="card-body p-2">
+            <p class="small mb-2">Un nodo es un estado (quiénes faltan cruzar y dónde está la linterna) más el tiempo acumulado.</p>
+            <table class="table table-sm table-bordered align-middle mb-0 small">
+              <tbody>
+                <tr><td class="font-monospace">HijosDe(nodo)</td><td>con la linterna en la salida, una ida por cada pareja que está ahí (AB, AC, AD, BC, BD, CD); con la linterna en la llegada, una vuelta por cada persona que está ahí (A, B, C, D). Siempre en ese orden</td></tr>
+                <tr><td class="font-monospace">EsSolucion(nodo)</td><td>nadie queda en la salida: las cuatro llegaron (y la linterna está en la llegada)</td></tr>
+                <tr><td class="font-monospace">Valor(nodo)</td><td>el tiempo acumulado</td></tr>
+                <tr><td class="font-monospace">Cota(nodo)</td><td>tiempo acumulado + lo mínimo que todavía hace falta (idas y vueltas, ver la pestaña Resolución); en una solución es su tiempo</td></tr>
+                <tr><td class="font-monospace">ExtraerMenorCota</td><td>sale el de menor cota; con empate, el de mayor tiempo acumulado; si sigue el empate, el que se generó primero</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">🔍 Explicación</div>
+          <div class="card-body">
+            <div v-if="currentStep">
+              <span class="badge fs-6 text-wrap text-start" :class="currentStep.badge.cls">{{ currentStep.badge.icon }} {{ currentStep.badge.text }}</span>
+            </div>
+            <p class="small text-muted mt-3 mb-0" v-if="currentStep">Paso {{ currentStepIndex + 1 }} de {{ steps.length }}</p>
+          </div>
+        </div>
+
+        <details class="card mb-3">
+          <summary class="card-header fw-semibold">⏱️ Complejidad: <span v-html="tex(complexity.total)"></span></summary>
+          <div class="card-body p-2" style="overflow-x: auto;">
+            <table class="table table-sm table-bordered align-middle mb-2 small">
+              <thead><tr><th v-for="h in complexity.headers" :key="h" class="dp-header-cell">{{ h }}</th></tr></thead>
+              <tbody>
+                <tr v-for="(r, idx) in complexity.rows" :key="idx">
+                  <td class="font-monospace">{{ r[0] }}</td>
+                  <td v-for="(c, k) in r.slice(1)" :key="k" :class="{ 'text-nowrap': k === r.length - 2 }" v-html="tex(c)"></td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="small mb-0" v-html="texInline(complexity.note)"></p>
+          </div>
+        </details>
+
+        <div class="card">
+          <div class="card-header fw-semibold">Leyenda</div>
+          <ul class="list-group list-group-flush small">
+            <li class="list-group-item"><span class="font-monospace">AB→ ←A</span> secuencia de acciones desde la raíz (<span class="font-monospace">AB→</span> = ida de A y B, <span class="font-monospace">←A</span> = vuelve A); abajo, <span class="font-monospace">tiempo / cota</span></li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="legend-box pending"></span> En pendientes</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="legend-box current"></span> Nodo que acaba de salir</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="legend-box"></span> Ya salió</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="legend-box best"></span> Mejor solución hasta ahora (★), con su camino desde la raíz en verde</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="legend-box pinned"></span> Nodo fijado con un clic (o en su paso de la tabla): su estado y su cota en el panel</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge rounded-pill border text-body">3</span> Paso en que salió de pendientes</li>
+            <li class="list-group-item d-flex align-items-center gap-2"><span class="badge rounded-pill bg-danger-subtle text-danger-emphasis border border-danger">✂</span> Poda por cota (cota ≥ mejor)</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="p-3 theory" v-else>
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">📖 Enunciado, en breve</div>
+          <div class="card-body">
+            <p>Cuatro personas (A, B, C, D, con tiempos de cruce 1, 2, 5 y 10 minutos) tienen que cruzar un puente de noche con <b>una sola linterna</b>. Sin linterna no se cruza, en ningún sentido. Cruzan como máximo dos a la vez, al ritmo del más lento. En cada ida cruzan exactamente dos y en cada vuelta regresa exactamente una. Se busca que las cuatro lleguen en el <b>menor tiempo total</b>.</p>
+            <p class="mb-0">Se pide el estado, una cota válida y la ejecución de Branch &amp; Bound Best-First con las reglas de la consigna. Con "✏️ Datos" se pueden cambiar los tiempos; <b>las respuestas de abajo son para los datos de la consigna</b>.</p>
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">1 · Representación del estado</div>
+          <div class="card-body">
+            <ul>
+              <li><b>Estado</b> <code>(S, ℓ)</code>: <code>S</code> es el conjunto de personas que siguen en la orilla de salida y <code>ℓ</code> es la orilla donde está la linterna. Inicial: <code>({A,B,C,D}, salida)</code>. Objetivo: <code>(∅, llegada)</code>. Las que no están en <code>S</code> están en la llegada.</li>
+              <li><b>Ida</b> (linterna en la salida): se eligen dos de <code>S</code>, salen de <code>S</code>, la linterna pasa a la llegada y cuesta lo del más lento de la pareja. <b>Vuelta</b> (linterna en la llegada): se elige una de las que están allá, entra a <code>S</code>, la linterna vuelve y cuesta su tiempo.</li>
+              <li><b>¿El tiempo acumulado forma parte del estado? No.</b> Lo que se puede hacer desde un estado y cuánto falta no depende de cuánto tiempo pasó: dos caminos que llegan al mismo <code>(S, ℓ)</code> tienen exactamente el mismo futuro y solo difieren en el tiempo ya gastado. Por eso el tiempo es el <b>costo <code>t</code> del nodo</b> (el camino recorrido), no del estado. Si formara parte del estado nunca habría dos estados iguales y no se podrían detectar repetidos (ver la pregunta 3).</li>
+              <li><b>Nodo:</b> el estado más el tiempo acumulado <code>t</code>, identificado por la secuencia de acciones desde la raíz (por ejemplo <code>AB→ ←A</code>). El árbol es finito: cada ida más su vuelta deja a una persona menos en la salida, así que no hay ciclos.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">2 · Función de cota</div>
+          <div class="card-body">
+            <p class="mb-2">Sea <code>L</code> el conjunto de las <code>k</code> personas que todavía están en la salida, <code>d₁ ≥ d₂ ≥ …</code> sus tiempos en orden decreciente, <code>m</code> el menor tiempo de todas y <code>δ = 1</code> si la linterna está en la salida (<code>0</code> si está en la llegada):</p>
+            <div class="mb-2" style="overflow-x: auto;" v-html="tex(FORMULAS.bound)"></div>
+            <p class="mb-1">En una solución (<code>k = 0</code>) la cota es exactamente el tiempo <code>t</code>. Usa más que el tiempo acumulado: mira quiénes faltan y dónde está la linterna.</p>
+            <p class="mb-1"><b>Por qué es válida (nunca sobreestima):</b></p>
+            <ul>
+              <li><b>Idas:</b> cada persona de <code>L</code> tiene que cruzar al menos una vez, en alguna ida. Cada ida lleva a lo sumo dos y cuesta lo del más lento. Repartiendo <code>L</code> en parejas, lo mejor que se puede hacer es juntar los de a dos más parecidos (el 1.º con el 2.º, el 3.º con el 4.º…), y el costo de esas idas es <code>d₁ + d₃ + d₅ + …</code>. Cualquier otra forma de cruzarlas cuesta lo mismo o más.</li>
+              <li><b>Vueltas:</b> hacen falta al menos <code>⌈k/2⌉</code> idas. Entre una ida y la siguiente hay una vuelta, y si la linterna está en la llegada hay una más antes de la primera ida. Eso son al menos <code>⌈k/2⌉ − δ</code> vueltas, y cada una cuesta al menos <code>m</code>.</li>
+              <li>Todo lo que se agregue en un camino real (más idas, otras vueltas, personas que vuelven) solo suma tiempo, así que ningún descendiente del nodo termina con un tiempo menor que la cota.</li>
+            </ul>
+            <p class="mb-0"><b>Ejemplo:</b> en la raíz, <code>L = {A,B,C,D}</code>, idas <code>10 + 2 = 12</code>, vueltas <code>(2 − 1)·1 = 1</code>, cota <code>0 + 12 + 1 = 13</code>. El óptimo es 17: la cota es válida y no es exacta.</p>
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">3 · Pseudocódigo (Branch &amp; Bound Best-First)</div>
+          <div class="card-body p-0">
+            <div class="pseudo-code">
+              <div v-for="(line, idx) in PSEUDOCODE" :key="idx" class="pseudo-line">{{ line }}</div>
+            </div>
+          </div>
+          <div class="card-footer small text-muted">
+            Las funciones <code>HijosDe</code>, <code>EsSolucion</code>, <code>Valor</code> y <code>Cota</code> están definidas en la pestaña "▶ Paso a paso". No hace falta <code>EsFactible</code>: toda acción permitida genera un estado alcanzable.
+          </div>
+        </div>
+
+        <div class="card mb-3">
+          <div class="card-header fw-semibold">4 · Orden en que salen los nodos de la cola</div>
+          <div class="card-body p-2" style="overflow-x: auto;">
+            <table class="table table-sm table-bordered text-center align-middle mb-2 small">
+              <thead>
+                <tr><th class="dp-header-cell">Paso</th><th class="dp-header-cell">Nodo</th><th class="dp-header-cell">Tiempo</th><th class="dp-header-cell">Cota</th><th class="dp-header-cell">Qué se hizo</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in finalRows" :key="row.k" :class="{ 'cell-final': row.star }">
+                  <td class="font-monospace">{{ row.k }}</td>
+                  <td class="font-monospace text-start">{{ row.label }}</td>
+                  <td class="font-monospace">{{ row.cost }}</td>
+                  <td class="font-monospace">{{ row.bound }}</td>
+                  <td class="text-start">{{ row.what }}{{ row.star ? ' ★' : '' }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="small mb-0">El árbol generado, con la solución óptima marcada con ★ y su camino en verde, es el de la vista principal: avanzá hasta el último paso, o fijá un nodo con un clic para ver su estado y su cota.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header fw-semibold">5 · Respuestas a las preguntas</div>
+          <div class="card-body">
+            <ol>
+              <li class="mb-2"><b>¿Por qué puede terminar apenas sale un nodo con cota ≥ mejor? ¿Y en profundidad?</b> Con Best-First sale siempre el de menor cota, así que todo lo que sigue en pendientes tiene cota ≥ la de ese nodo ≥ <code>mejor</code>. Como la cota no sobreestima el tiempo de ningún descendiente, ninguno de esos nodos (ni lo que salga de ellos) puede mejorar a <code>mejor</code>: ya no queda nada por explorar. En un recorrido en profundidad no es así: el nodo que sale es el último que entró, no el de menor cota, y un nodo con cota ≥ <code>mejor</code> solo se descarta (<code>CONTINUAR</code>); otros nodos de la pila pueden tener cotas menores y seguir siendo prometedores.</li>
+              <li class="mb-2"><b>¿Por qué la primera solución completa que sale de la cola ya es la óptima?</b> La cota de una solución es su tiempo exacto, y si sale de la cola es porque es la menor de todas las cotas pendientes. Toda otra solución cuelga de un nodo pendiente, y su tiempo es ≥ la cota de ese nodo ≥ la de la solución. En el ejemplo, la solución <code>AB→ ←A CD→ ←B AB→</code> sale con cota 17 y todo lo pendiente tiene cota ≥ 17.</li>
+              <li class="mb-2"><b>Dos nodos con el mismo estado.</b> <code>AB→ ←A</code> (t = 3), <code>BC→ ←C</code> (t = 10) y <code>BD→ ←D</code> (t = 20) son el mismo estado: <code>A, C y D en la salida, con la linterna en la salida</code>. Sí se puede podar uno <b>sin usar la cota</b>, por <b>dominancia</b>: como el futuro desde un estado no depende del tiempo gastado, de dos nodos con el mismo estado alcanza con quedarse con el de menor tiempo acumulado y descartar el otro (guardando el mejor tiempo conocido por estado). Acá se descartarían los de t = 10 y t = 20.</li>
+              <li class="mb-2"><b>¿Cuántos nodos tiene el árbol completo, sin poda?</b> <b>271.</b> Por nivel: 1 (raíz), 6 idas, 12 vueltas (cada una de las 6 tiene 2 personas que pueden volver), 36 idas (de las 3 en la salida salen 3 parejas), 108 vueltas (3 que pueden volver) y 108 idas finales (queda una sola pareja): <code>1 + 6 + 12 + 36 + 108 + 108 = 271</code>. Es finito porque cada ida más su vuelta saca a una persona de la salida; los 108 del último nivel son soluciones completas. La corrida generó 26 de los 271 (menos del 10 %).</li>
+              <li class="mb-0"><b>En la solución óptima, ¿los dos más lentos cruzan juntos?</b> Sí: C y D cruzan juntos (<code>CD→</code>) y el total es 17. Con <code>A</code>, <code>C</code> y <code>D</code> fijos, esa estrategia (<code>AB→ ←A CD→ ←B AB→</code>) cuesta <code>B + A + D + B + B = A + 3B + D = 3B + 11</code>. La alternativa, donde A acompaña a cada uno (<code>AD→ ←A AC→ ←A AB→</code>), cuesta <code>D + A + C + A + B = B + 17</code>. La primera conviene si <code>3B + 11 ≤ B + 17</code>, o sea <code>2B ≤ A + C</code>, es decir <b>B ≤ 3</b>: es estrictamente mejor para B &lt; 3 y empatan en B = 3 (20 en ambas). Para B &gt; 3 (hasta C = 5) conviene que A acompañe a cada uno: con B = 4 da 21 en vez de 23.</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-bar text-center small border-top">
+    <p> Hecho con ❤️ por <a href="https://github.com/programacion-avanzada">Programación Avanzada</a> (y <a href="https://claude.ai">Claude</a>)</p>
+  </div>
+
+</div>
+
+<script>
+const { createApp, ref, reactive, computed, watch, nextTick, onMounted, onBeforeUnmount } = Vue;
+
+const MIN_P = 3, MAX_P = 5;
+// Los datos de la consigna: A, B, C y D tardan 1, 2, 5 y 10 minutos en cruzar.
+const DEFAULT_STATE = { times: [1, 2, 5, 10] };
+
+// Branch and Bound Best-First de minimización: mejor arranca en +∞ y se poda con cota ≥ mejor.
+const PSEUDOCODE = [
+  'ALGORITMO BranchAndBound_BestFirst(raíz)',
+  '  mejor ← +∞',
+  '  pendientes ← ColaDePrioridad vacía',
+  '  Insertar(pendientes, raíz, Cota(raíz))',
+  '  MIENTRAS pendientes no esté vacía HACER',
+  '    (nodo, cota) ← ExtraerMenorCota(pendientes)',
+  '    SI cota ≥ mejor ENTONCES',
+  '      TERMINAR',
+  '    SI EsSolucion(nodo) ENTONCES',
+  '      mejor ← Valor(nodo)',
+  '      mejorSolucion ← nodo',
+  '    SINO',
+  '      PARA CADA hijo EN HijosDe(nodo) HACER',
+  '        Insertar(pendientes, hijo, Cota(hijo))',
+  '  RETORNAR mejorSolucion',
+];
+
+const MARKS = { pruned: '✂', best: '★' };
+const nameOf = i => String.fromCharCode(65 + i);
+function fmtBest(v) { return v === Infinity ? '+∞' : String(v); }
+
+// Cantidad de nodos del árbol completo, sin poda. count(s, ida) = nodos del subárbol de un estado con s personas
+// en la salida; la linterna en la salida tiene C(s, 2) idas, en la llegada, una vuelta por cada persona de allá.
+function maxNodesFor(n) {
+  const count = (s, torchLeft) => s === 0 ? 1
+    : 1 + (torchLeft ? s * (s - 1) / 2 * count(s - 2, false) : (n - s) * count(s + 1, true));
+  return count(n, true);
+}
+
+// ── Corre el algoritmo una vez y devuelve todos los nodos generados más un snapshot por punto de parada.
+function computeSteps(times) {
+  const n = times.length;
+  const m = Math.min(...times);
+  const nodes = [];
+
+  // Un nodo es el estado (quiénes siguen en la salida, dónde está la linterna) más el tiempo acumulado.
+  // Cota = t + idas + vueltas: las idas cuestan lo que el más lento de cada pareja de las que faltan
+  // (la 1.ª, 3.ª, 5.ª… más lentas) y las vueltas, al menos m cada una.
+  function makeNode(parent, act, left, torchLeft, cost) {
+    const order = [...left].sort((a, b) => times[b] - times[a] || a - b);
+    const counted = order.filter((_, j) => j % 2 === 0);
+    const idas = counted.reduce((s, i) => s + times[i], 0);
+    const trips = Math.ceil(left.length / 2);
+    const returns = left.length === 0 ? 0 : torchLeft ? trips - 1 : trips;
+    const bound = cost + idas + returns * m;
+    const leaf = left.length === 0;
+    const node = { id: nodes.length, parent: parent ? parent.id : null, act, depth: parent ? parent.depth + 1 : 0,
+      left, torchLeft, cost, bound, counted, leaf };
+    node.label = parent ? (parent.parent === null ? act : `${parent.label} ${act}`) : 'raíz';
+    node.detail = `${cost} / ${bound}`;
+    node.calc = leaf
+      ? `solución: cota = t = ${cost}`
+      : `cota = ${cost} + (${counted.map(i => times[i]).join(' + ')}) + ${returns}·${m} = ${bound}`;
+    nodes.push(node);
+    return node;
+  }
+  // Los hijos, en el orden de la consigna: idas AB, AC, AD, BC, BD, CD o vueltas A, B, C, D.
+  function childrenOf(node) {
+    const out = [];
+    if (node.torchLeft) {
+      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+        if (!node.left.includes(i) || !node.left.includes(j)) continue;
+        out.push({ act: `${nameOf(i)}${nameOf(j)}→`, text: `Cruzan ${nameOf(i)} y ${nameOf(j)}, al ritmo de ${Math.max(times[i], times[j])} min`,
+          left: node.left.filter(x => x !== i && x !== j), torchLeft: false, cost: node.cost + Math.max(times[i], times[j]) });
+      }
+    } else {
+      for (let p = 0; p < n; p++) {
+        if (node.left.includes(p)) continue;
+        out.push({ act: `←${nameOf(p)}`, text: `Vuelve ${nameOf(p)} con la linterna (${times[p]} min)`,
+          left: [...node.left, p].sort((a, b) => a - b), torchLeft: true, cost: node.cost + times[p] });
+      }
+    }
+    return out;
+  }
+
+  // Menor cota; ante un empate, mayor tiempo acumulado; si sigue el empate, el que se generó primero (menor id).
+  const cmp = (a, b) => a.bound - b.bound || b.cost - a.cost || a.id - b.id;
+  const pending = [];
+
+  const steps = [];
+  const status = {}, order = {}, rows = [];
+  let best = Infinity, bestId = null, current = null, inserted = null;
+  function snapshot(activeLines, badge) {
+    steps.push({ activeLines, status: { ...status }, order: { ...order }, pending: [...pending].sort(cmp).map(p => p.id),
+      best, bestId, current, inserted, rows: rows.map(r => ({ ...r })), badge });
+  }
+
+  snapshot([1], { icon: '🏁', text: 'mejor arranca en +∞: la primera solución completa lo va a mejorar.', cls: 'bg-secondary' });
+  const root = makeNode(null, '', [...Array(n).keys()], true, 0);
+  pending.push(root);
+  status[root.id] = 'pending';
+  snapshot([2, 3], { icon: '🌱', text: `La raíz entra a pendientes: las ${n} personas en la salida, con la linterna, t = 0. ${root.calc}.`, cls: 'bg-primary' });
+
+  let k = 0;
+  while (pending.length) {
+    pending.sort(cmp);
+    const node = pending.shift();
+    const tied = pending.filter(p => p.bound === node.bound);
+    order[node.id] = ++k;
+    status[node.id] = 'out';
+    current = node.id;
+    inserted = null;
+    const row = { id: node.id, k, label: node.label, cost: node.cost, bound: node.bound, best, star: false, what: '' };
+    rows.push(row);
+    let why = 'Es el de menor cota en pendientes.';
+    if (tied.length) {
+      why = tied.some(p => p.cost === node.cost)
+        ? `Empata en cota (${node.bound}) y en tiempo con otro: sale el que se generó primero.`
+        : `Empata en cota (${node.bound}) con ${tied.length === 1 ? 'otro' : `otros ${tied.length}`}: sale el de mayor tiempo acumulado (${node.cost}).`;
+    }
+    snapshot([4, 5], { icon: '📤', text: `Paso ${k}: sale ${node.label}, tiempo ${node.cost} y cota ${node.bound}. ${why}`, cls: 'bg-warning text-dark' });
+
+    if (node.bound >= best) {
+      status[node.id] = 'pruned';
+      for (const p of pending) status[p.id] = 'pruned';
+      const rest = pending.length;
+      pending.length = 0;
+      row.what = 'podar y terminar';
+      snapshot([6, 7], { icon: '✂', text: `Poda por cota: ${node.bound} ≥ mejor = ${best}. Con Best-First todo lo que queda en pendientes (${rest} nodo${rest === 1 ? '' : 's'}) tiene cota ≥ ${node.bound}, así que ninguno puede mejorar: el algoritmo termina.`, cls: 'bg-danger' });
+      break;
+    }
+    snapshot([6], { icon: '✔️', text: `Su cota ${node.bound} < mejor = ${fmtBest(best)}: puede llevar a una solución mejor, se sigue.`, cls: 'bg-info text-dark' });
+
+    if (node.leaf) {
+      const prev = best;
+      best = node.cost;
+      bestId = node.id;
+      row.best = best;
+      row.star = true;
+      row.what = 'registrar solución';
+      snapshot([8, 9, 10], { icon: '★', text: `Las ${n} personas llegaron: es una solución, de ${node.cost} min. mejor ← ${node.cost} (antes ${fmtBest(prev)}) y mejorSolucion ← ${node.label}.`, cls: 'bg-success' });
+      continue;
+    }
+
+    const kids = childrenOf(node);
+    row.what = `expandir: ${kids.length} hijo${kids.length === 1 ? '' : 's'}`;
+    for (const c of kids) {
+      const child = makeNode(node, c.act, c.left, c.torchLeft, c.cost);
+      pending.push(child);
+      status[child.id] = 'pending';
+      inserted = child.id;
+      snapshot([12, 13], { icon: '📥', text: `${c.text}: ${child.label}, t = ${child.cost}. ${child.calc}.`, cls: 'bg-primary' });
+    }
+  }
+
+  current = null;
+  inserted = null;
+  snapshot([14], { icon: '🏁', text: `Retorna mejorSolucion = ${nodes[bestId].label}, de ${best} min. Se generaron ${nodes.length} de ${maxNodesFor(n)} nodos posibles.`, cls: 'bg-success' });
+  return { nodes, steps };
+}
+
+// ── Layout del árbol: cada hoja ocupa una columna y cada padre queda centrado sobre sus hijos
+// (Reingold-Tilford simplificado, como recursion/call-tree.html), con un nivel por fila. Se calcula sobre los nodos
+// visibles en el paso, así el árbol se ve compacto y los nodos se deslizan a su lugar al crecer (transición CSS).
+const BOX_H = 40, LEVEL_H = 80, GAP = 14, PAD = 16;
+function boxWidthFor(nodes) {
+  const chars = Math.max(...nodes.map(n => Math.max(n.label.length, n.detail.length)));
+  return Math.max(84, chars * 7.3 + 20);
+}
+function layoutVisible(visible, boxW) {
+  const pos = {}, kids = {};
+  for (const n of visible) if (n.parent !== null) (kids[n.parent] ||= []).push(n.id);
+  const depthOf = {};
+  visible.forEach(n => { depthOf[n.id] = n.depth; });
+  let slot = 0;
+  function place(id) {
+    const ch = kids[id] || [];
+    let x;
+    if (ch.length) { ch.forEach(place); x = (pos[ch[0]].x + pos[ch.at(-1)].x) / 2; }
+    else x = PAD + boxW / 2 + slot++ * (boxW + GAP);
+    pos[id] = { x, y: PAD + BOX_H / 2 + depthOf[id] * LEVEL_H };
+  }
+  if (visible.length) place(0);
+  const depth = Math.max(0, ...visible.map(n => n.depth));
+  return { pos, width: 2 * PAD + slot * boxW + (slot - 1) * GAP, height: 2 * PAD + BOX_H + depth * LEVEL_H };
+}
+
+function parseTimes(text) {
+  const tokens = text.split(/[\s,;]+/).filter(Boolean);
+  if (tokens.length < MIN_P || tokens.length > MAX_P) return { error: `Hace falta de ${MIN_P} a ${MAX_P} tiempos (hay ${tokens.length}).` };
+  const times = [];
+  for (const t of tokens) {
+    if (!/^\d+$/.test(t) || Number(t) < 1) return { error: `"${t}" no es un entero ≥ 1.` };
+    times.push(Number(t));
+  }
+  return { times };
+}
+
+// Fórmula LaTeX → HTML, para v-html (renderToString: las celdas salen de un v-for, sin id ni nextTick).
+function tex(s) { return katex.renderToString(s, { throwOnError: false }); }
+// Texto con fórmulas entre $…$: los tramos impares son LaTeX, el resto texto plano (escapado).
+function texInline(s) {
+  return s.split('$').map((t, i) => i % 2 ? tex(t) : t.replace(/&/g, '&amp;').replace(/</g, '&lt;')).join('');
+}
+const FORMULAS = {
+  bound: "\\text{cota} = t + \\underbrace{d_1 + d_3 + d_5 + \\cdots}_{\\text{idas}} + \\underbrace{\\left(\\lceil k/2 \\rceil - \\delta\\right) \\cdot m}_{\\text{vueltas}}",
+};
+// Explicación de la complejidad (card desplegable): cada fila es [línea del pseudocódigo, veces que se ejecuta, costo total]; veces, costo y total en LaTeX.
+const COMPLEXITY = {
+  total: "O(N \\cdot n \\log n)",
+  headers: ["Línea", "Veces", "Costo"],
+  rows: [
+    ["mejor ← +∞; pendientes ← …; Insertar(raíz, Cota(raíz))", "1", "O(n \\log n)"],
+    ["MIENTRAS pendientes no esté vacía", "\\le N + 1", "O(N)"],
+    ["(nodo, cota) ← ExtraerMenorCota(pendientes)", "\\le N", "O(N \\log N)"],
+    ["SI cota ≥ mejor; SI EsSolucion(nodo)", "\\le N", "O(N)"],
+    ["PARA CADA hijo EN HijosDe(nodo): Insertar(pendientes, hijo, Cota(hijo))", "\\le N - 1", "O(N \\cdot n \\log n)"],
+    ["RETORNAR mejorSolucion", "1", "O(1)"],
+  ],
+  note: "$N$ es la cantidad de nodos del árbol, que es finito: cada ida más su vuelta deja a una persona menos en la salida, así que la profundidad es a lo sumo $2n - 3$ y $N \\le (n^2)^{2n-3}$ (271 con $n = 4$; la corrida generó 26). Cada cota ordena a las que faltan cruzar: $O(n \\log n)$. Como $\\log N = O(n \\log n)$, la cola de prioridad (un montículo) no domina: el total es $O(N \\cdot n \\log n)$ en el peor caso. La poda no cambia el peor caso, pero con Best-First y una cota ajustada se explora una fracción del árbol.",
+};
+
+// Auto-chequeo con los datos de la consigna: el óptimo es 17 con AB→ ←A CD→ ←B AB→, se generan 26 nodos y salen 12.
+// Y con A = 1, C = 5, D = 10, el óptimo es min(3B + 11, B + 17) (verificado con Dijkstra sobre los estados para B = 1..5).
+(function selfCheck() {
+  const { nodes, steps } = computeSteps(DEFAULT_STATE.times);
+  const end = steps.at(-1);
+  console.assert(end.best === 17 && nodes[end.bestId].label === 'AB→ ←A CD→ ←B AB→', 'Puente: solución óptima', end.best);
+  console.assert(nodes.length === 26 && end.rows.length === 12, 'Puente: 26 generados y 12 salidas', nodes.length, end.rows.length);
+  console.assert(maxNodesFor(4) === 271, 'Puente: el árbol completo tiene 271 nodos', maxNodesFor(4));
+  for (const B of [1, 2, 3, 4, 5]) {
+    const r = computeSteps([1, B, 5, 10]).steps.at(-1);
+    console.assert(r.best === Math.min(3 * B + 11, B + 17), `Puente: óptimo con B = ${B}`, r.best);
+  }
+})();
+
+createApp({
+  setup() {
+    const STORAGE_KEY = 'pa-tools-ejercicios-puente-linterna';
+
+    // Estado editable (lo que se persiste) y el borrador de los tiempos en el panel de datos.
+    const times = ref([...DEFAULT_STATE.times]);
+    const timesDraft = ref('');
+    const draftError = ref('');
+    const showEditor = ref(false);
+    const tab = ref('pasos');
+
+    const maxNodes = computed(() => maxNodesFor(times.value.length));
+
+    const nodes = ref([]);
+    const layout = ref({ boxW: 84 });
+    const steps = ref([]);
+    const currentStepIndex = ref(0);
+    const isPlaying = ref(false);
+    const speedMs = ref(700);
+    let playTimer = null;
+
+    const isDark = ref(document.documentElement.getAttribute('data-bs-theme') === 'dark');
+    const treeViewEl = ref(null);
+    const view = { w: 800, h: 400 };
+
+    const currentStep = computed(() => steps.value[currentStepIndex.value] || null);
+    const isAtEnd = computed(() => currentStepIndex.value >= steps.value.length - 1);
+    const visibleNodes = computed(() => currentStep.value ? nodes.value.filter(n => n.id in currentStep.value.status) : []);
+    const placed = computed(() => layoutVisible(visibleNodes.value, layout.value.boxW));
+    const finalRows = computed(() => steps.value.length ? steps.value.at(-1).rows : []);
+    // Aristas del camino desde la raíz hasta la mejor solución (se pintan en verde).
+    const bestPath = computed(() => {
+      const ids = new Set();
+      let id = currentStep.value ? currentStep.value.bestId : null;
+      while (id !== null) { ids.add(id); id = nodes.value[id].parent; }
+      return ids;
+    });
+    function rightOf(node) { return times.value.map((_, i) => i).filter(i => !node.left.includes(i)); }
+
+    // Arista del padre al hijo: un trazo de 3 puntos (recta = codo degenerado) para que d se pueda interpolar.
+    function edgePath(n) {
+      const p = placed.value.pos[n.parent], c = placed.value.pos[n.id];
+      return `M ${p.x} ${p.y + BOX_H / 2} L ${c.x} ${c.y - BOX_H / 2} L ${c.x} ${c.y - BOX_H / 2}`;
+    }
+    function labelAt(n) {
+      const p = placed.value.pos[n.parent], c = placed.value.pos[n.id];
+      return { x: (p.x + c.x) / 2, y: (p.y + c.y) / 2 };
+    }
+
+    // ── Foco del panel de estado y cota: el nodo fijado con un clic (si se ve en este paso)
+    // o, si no, el que se acaba de insertar, el que acaba de salir, el mejor o la raíz.
+    const pinnedId = ref(null);
+    const pinnedVisible = computed(() => pinnedId.value !== null && currentStep.value && pinnedId.value in currentStep.value.status);
+    const focus = computed(() => {
+      const s = currentStep.value;
+      const id = pinnedVisible.value ? pinnedId.value : s.inserted ?? s.current ?? s.bestId ?? 0;
+      return nodes.value[id];
+    });
+
+    // ── Cámara: pan arrastrando, zoom con la rueda (centrado en el cursor). No se persiste.
+    // fitToView encuadra todo el árbol (sin agrandarlo más de 1:1), salvo que el usuario haya movido la vista.
+    const camera = reactive({ x: 0, y: 0, scale: 1 });
+    let userAdjustedCamera = false;
+    // Encuadra el árbol visible en este paso, sin agrandarlo más de 1:1 ni achicarlo por debajo de MIN_SCALE
+    // para que se pueda leer. Si no entra, sigue al nodo del paso. Con whole (botón 🎯) lo muestra entero.
+    const MIN_SCALE = 0.5;
+    function fitToView(whole) {
+      if (!visibleNodes.value.length) return;
+      const { pos, width, height } = placed.value;
+      camera.scale = Math.max(whole === true ? 0.1 : MIN_SCALE, Math.min(1, view.w / width, view.h / height));
+      const s = currentStep.value, focusPos = pos[s.inserted ?? s.current ?? s.bestId ?? 0];
+      camera.x = width * camera.scale <= view.w ? (view.w - width * camera.scale) / 2 : view.w / 2 - focusPos.x * camera.scale;
+      camera.y = 8;
+      userAdjustedCamera = false;
+    }
+    // Al avanzar de paso la vista se reencuadra, salvo que el usuario la haya movido; 🎯 la reactiva.
+    watch(currentStepIndex, () => { if (!userAdjustedCamera) fitToView(); });
+    const isPanning = ref(false);
+    let panStart = null;
+    function onPointerDown(e) {
+      isPanning.value = true;
+      panStart = { px: e.clientX, py: e.clientY, x: camera.x, y: camera.y };
+      e.currentTarget.setPointerCapture(e.pointerId);
+    }
+    function onPointerMove(e) {
+      if (!isPanning.value) return;
+      camera.x = panStart.x + e.clientX - panStart.px;
+      camera.y = panStart.y + e.clientY - panStart.py;
+      if (Math.hypot(e.clientX - panStart.px, e.clientY - panStart.py) > 4) userAdjustedCamera = true;
+    }
+    // Un clic (sin arrastrar) sobre un nodo lo fija como foco; en el vacío, lo suelta.
+    // El <svg> tiene la captura del puntero, así que el nodo se busca por coordenadas.
+    function onPointerUp(e) {
+      if (!isPanning.value) return;
+      isPanning.value = false;
+      if (Math.hypot(e.clientX - panStart.px, e.clientY - panStart.py) > 4) return;
+      const el = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-node-id]');
+      pinnedId.value = el ? Number(el.dataset.nodeId) : null;
+    }
+    function onWheel(e) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      const next = Math.min(3, Math.max(0.1, camera.scale * (e.deltaY < 0 ? 1.1 : 0.9)));
+      camera.x = mx - (mx - camera.x) * next / camera.scale;
+      camera.y = my - (my - camera.y) * next / camera.scale;
+      camera.scale = next;
+      userAdjustedCamera = true;
+    }
+    function onKeydown(e) {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName)) return;
+      if (e.key === 'Escape') pinnedId.value = null;
+      // ← → avanzan y retroceden.
+      if (e.key === 'ArrowRight') { e.preventDefault(); stepForward(); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); stepBackward(); }
+    }
+
+    // Clic en el número de paso de la tabla: selecciona ese nodo y, si está fuera de pantalla, lo centra.
+    function selectRow(row) {
+      pinnedId.value = row.id;
+      const at = placed.value.pos[row.id];
+      const sx = camera.x + at.x * camera.scale, sy = camera.y + at.y * camera.scale;
+      if (sx < 0 || sx > view.w || sy < 0 || sy > view.h) {
+        camera.x = view.w / 2 - at.x * camera.scale;
+        camera.y = view.h / 2 - at.y * camera.scale;
+        userAdjustedCamera = true;
+      }
+    }
+    // Y al revés: al seleccionar un nodo que ya salió, su fila de seguimiento se trae a la vista.
+    watch(pinnedId, () => nextTick(() => document.querySelector('.row-selected')?.scrollIntoView({ block: 'nearest' })));
+
+    function nodeClass(n) {
+      const s = currentStep.value;
+      return {
+        'bn-pending': s.status[n.id] === 'pending',
+        'bn-best': s.bestId === n.id,
+        'bn-current': s.current === n.id,
+        'bn-pinned': pinnedVisible.value && pinnedId.value === n.id,
+      };
+    }
+    function markOf(n) {
+      const s = currentStep.value;
+      if (s.bestId === n.id) return 'best';
+      return s.status[n.id] === 'pruned' ? 'pruned' : null;
+    }
+    function nodeTitle(n) {
+      const s = currentStep.value;
+      const st = { pending: 'en pendientes', out: 'ya salió', pruned: 'podado por cota' }[s.status[n.id]];
+      return `${n.label}: ${n.calc} (${st})${s.order[n.id] ? `, salió en el paso ${s.order[n.id]}` : ''}. Clic para ver su estado y su cota.`;
+    }
+
+    // ── Persistencia ──
+    function currentState() {
+      return { times: times.value };
+    }
+    function applyState(data) {
+      const parsed = parseTimes((data.times ?? times.value).join(' '));
+      times.value = parsed.times ?? times.value;
+      timesDraft.value = times.value.join(' ');
+      draftError.value = '';
+      regenerateSteps();
+    }
+    function persist() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(currentState()));
+    }
+    function loadFromStorage() {
+      try {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (!raw) { resetToDefault(); return; }
+        applyState(JSON.parse(raw));
+      } catch (e) { resetToDefault(); }
+    }
+
+    // ── Compartir por URL (#d=...) ──
+    function encodeState(data) { return encodeURIComponent(JSON.stringify(data)); }
+    function decodeState(str) { return JSON.parse(decodeURIComponent(str)); }
+
+    function loadInitialState() {
+      if (location.hash.startsWith('#d=')) {
+        try {
+          applyState(decodeState(location.hash.slice(3)));
+          history.replaceState(null, '', location.pathname + location.search);
+          persist();
+          return;
+        } catch (e) { console.error('No se pudo leer la configuración de la URL:', e); }
+      }
+      loadFromStorage();
+    }
+
+    const shareCopied = ref(false);
+    function shareCurrentState() {
+      const url = `${location.origin}${location.pathname}#d=${encodeState(currentState())}`;
+      const onCopied = () => { shareCopied.value = true; setTimeout(() => { shareCopied.value = false; }, 2000); };
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(url).then(onCopied).catch(() => window.prompt('Copiá el link:', url));
+      } else {
+        window.prompt('Copiá el link:', url);
+      }
+    }
+
+    // ── "Nuevo" (2 pasos) ──
+    const newConfirm = ref(false);
+    function handleNewClick() {
+      if (newConfirm.value) { resetToDefault(); return; }
+      newConfirm.value = true;
+      setTimeout(() => { if (newConfirm.value) newConfirm.value = false; }, 3000);
+    }
+    function resetToDefault() {
+      newConfirm.value = false;
+      applyState(DEFAULT_STATE);
+      persist();
+    }
+
+    // ── Editar datos ──
+    function applyDraft() {
+      const { times: parsed, error } = parseTimes(timesDraft.value);
+      draftError.value = error || '';
+      if (error) return;
+      applyState({ times: parsed });
+      persist();
+    }
+
+    // ── Reproducción ──
+    function regenerateSteps() {
+      const run = computeSteps(times.value);
+      layout.value = { boxW: boxWidthFor(run.nodes) };
+      nodes.value = run.nodes;
+      steps.value = run.steps;
+      currentStepIndex.value = 0;
+      pinnedId.value = null;
+      stopAutoplay();
+      fitToView();
+    }
+    function goToStep(i) {
+      currentStepIndex.value = Math.max(0, Math.min(steps.value.length - 1, i));
+    }
+    function stepForward() { if (!isAtEnd.value) goToStep(currentStepIndex.value + 1); else stopAutoplay(); }
+    function stepBackward() { goToStep(currentStepIndex.value - 1); }
+    function restartAnimation() { stopAutoplay(); goToStep(0); }
+    function stopAutoplay() {
+      isPlaying.value = false;
+      if (playTimer) { clearInterval(playTimer); playTimer = null; }
+    }
+    function togglePlay() {
+      if (isPlaying.value) { stopAutoplay(); return; }
+      if (isAtEnd.value) goToStep(0);
+      isPlaying.value = true;
+      playTimer = setInterval(() => {
+        if (isAtEnd.value) { stopAutoplay(); return; }
+        stepForward();
+      }, speedMs.value);
+    }
+
+    // ── Tema claro/oscuro ──
+    function toggleTheme() {
+      isDark.value = !isDark.value;
+      const theme = isDark.value ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-bs-theme', theme);
+      localStorage.setItem('theme', theme);
+    }
+
+    // ── Ciclo de vida ──
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      view.w = entry.contentRect.width;
+      view.h = entry.contentRect.height;
+      if (!userAdjustedCamera) fitToView();
+    });
+    loadInitialState();
+    onMounted(() => {
+      resizeObserver.observe(treeViewEl.value);
+      window.addEventListener('keydown', onKeydown);
+    });
+    onBeforeUnmount(() => {
+      resizeObserver.disconnect();
+      window.removeEventListener('keydown', onKeydown);
+      stopAutoplay();
+    });
+
+    return {
+      complexity: COMPLEXITY, FORMULAS, tex, texInline,
+      MARKS, MIN_P, MAX_P, BOX_H, PSEUDOCODE, tab, times, nameOf, rightOf, maxNodes, nodes, layout, visibleNodes, treeViewEl, finalRows, bestPath,
+      camera, isPanning, fitToView, selectRow, edgePath, labelAt, placed, onPointerDown, onPointerMove, onPointerUp, onWheel,
+      nodeClass, markOf, nodeTitle, fmtBest,
+      focus, pinnedId, pinnedVisible,
+      steps, currentStepIndex, currentStep, isAtEnd,
+      isPlaying, speedMs, togglePlay, stepForward, stepBackward, restartAnimation,
+      showEditor, timesDraft, draftError, applyDraft,
+      newConfirm, handleNewClick, shareCopied, shareCurrentState,
+      isDark, toggleTheme,
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

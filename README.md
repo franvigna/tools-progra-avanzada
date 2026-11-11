@@ -209,6 +209,7 @@ Resolución paso a paso de ejercicios propuestos, con el mismo formato que el re
 | [`ejercicios/CaminoAUNLaM.html`](ejercicios/CaminoAUNLaM.html) | Camino a UNLaM (Dijkstra desde Casa sobre el grafo de tramos, con tabla de iteraciones S / V − S / w / D / P y reconstrucción del camino) | O((V+E)·log V) |
 | [`ejercicios/CaceriaDelAgenteSmith.html`](ejercicios/CaceriaDelAgenteSmith.html) | La Cacería del Agente Smith (búsqueda en una matriz ordenada por filas y columnas con una escalera recursiva desde la esquina superior derecha, ejemplos al azar y la solución en Java) | O(n) |
 | [`ejercicios/GrillaDeAlfonsina.html`](ejercicios/GrillaDeAlfonsina.html) | La grilla de Alfonsina (coloreo de grafos con Welsh-Powell: materias como vértices, franjas como colores, cota inferior por K4) | O(V·log V + k·(V+E)) |
+| [`ejercicios/ElPuenteYLaLinterna.html`](ejercicios/ElPuenteYLaLinterna.html) | El puente y la linterna (Branch & Bound Best-First para minimizar el tiempo de cruce: estado, cota con idas y vueltas, árbol con ★, tabla de salidas y las 5 respuestas) | O(N·n·log n) |
 
 Salvo Camino a UNLaM (que es `grafos/dijkstra.html` con el grafo y las preguntas de la consigna), usan el formato de entrada del enunciado y tienen pseudocódigo con la línea activa, tabla de seguimiento y una pestaña "Resolución" con lo que pide el enunciado (modelado, pseudocódigo, complejidad).
 
